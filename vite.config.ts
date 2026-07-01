@@ -49,7 +49,6 @@ export default defineConfig(() => {
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
       allowedHosts: [
         'kitabdigital.zoeldev.my.id',
-        'kitab.zoeldev.my.id',
         'localhost',
         '127.0.0.1',
         '.run.app',

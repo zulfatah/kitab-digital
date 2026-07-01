@@ -20,6 +20,16 @@ function MainLayout() {
   const { view, setView, preferences, currentUserEmail, currentUserName } = useApp();
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
 
+  // Sync dark class on document.documentElement based strictly on preferences.theme
+  React.useEffect(() => {
+    const root = document.documentElement;
+    if (preferences.theme === 'dark') {
+      root.classList.add('dark');
+    } else {
+      root.classList.remove('dark');
+    }
+  }, [preferences.theme]);
+
   // Map theme variables for full viewport body
   const themeBgClasses = {
     light: 'bg-[#FDFBF7] text-[#333333]',

@@ -1,33 +1,16 @@
 import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import jwt from 'jsonwebtoken';
-import dotenv from 'dotenv';
-
-// Configure dotenv
-dotenv.config();
-
-import { initializeDatabase, ensureDbInitialized, dbService, getDatabaseStatus } from './server/db';
+import { createServer as createViteServer } from 'vite';
+import { initializeDatabase, dbService, getDatabaseStatus } from './server/db';
 
 const app = express();
-const PORT = 7000;
+const PORT = 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_default_secret_jwt_key_987654';
 
 // Use express.json with limit to handle large custom kitab / drafts uploads
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
-
-// Kick off database initialization in background
-ensureDbInitialized().catch((e) => console.error('Background DB init failed:', e));
-
-// Middleware to ensure DB is initialized before any requests are processed
-app.use(async (req, res, next) => {
-  try {
-    await ensureDbInitialized();
-    next();
-  } catch (err) {
-    next(err);
-  }
-});
 
 // JWT Verification Middleware
 interface AuthenticatedRequest extends Request {
@@ -69,7 +52,11 @@ const optionalAuthenticateJWT = (req: AuthenticatedRequest, res: Response, next:
   }
 };
 
-// --- API ROUTES ---
+async function startServer() {
+  // Initialize Database Pool
+  await initializeDatabase();
+
+  // --- API ROUTES ---
 
   // Diagnostic Endpoint: Check Database Connection Status
   app.get('/api/db-status', (req: Request, res: Response) => {
@@ -581,34 +568,25 @@ const optionalAuthenticateJWT = (req: AuthenticatedRequest, res: Response, next:
 
   // --- DEV & ASSET ROUTING SETUP ---
 
-  async function startServer() {
-    if (process.env.VERCEL) {
-      console.log('Running as Vercel Serverless Function - skipping static file hosting and app.listen');
-      return;
-    }
-
-    if (process.env.NODE_ENV !== 'production') {
-      const { createServer: createViteServer } = await import('vite');
-      const vite = await createViteServer({
-        server: { middlewareMode: true },
-        appType: 'spa'
-      });
-      app.use(vite.middlewares);
-    } else {
-      const distPath = path.join(process.cwd(), 'dist');
-      app.use(express.static(distPath));
-      app.get('*', (req: Request, res: Response) => {
-        res.sendFile(path.join(distPath, 'index.html'));
-      });
-    }
-
-    app.listen(PORT, '0.0.0.0', () => {
-      console.log(`Express full-stack server running on http://localhost:${PORT}`);
+  if (process.env.NODE_ENV !== 'production') {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: 'spa'
+    });
+    app.use(vite.middlewares);
+  } else {
+    const distPath = path.join(process.cwd(), 'dist');
+    app.use(express.static(distPath));
+    app.get('*', (req: Request, res: Response) => {
+      res.sendFile(path.join(distPath, 'index.html'));
     });
   }
 
-  startServer().catch((e) => {
-    console.error('Fatal server boot failure:', e);
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Express full-stack server running on http://localhost:${PORT}`);
   });
+}
 
-  export default app;
+startServer().catch((e) => {
+  console.error('Fatal server boot failure:', e);
+});

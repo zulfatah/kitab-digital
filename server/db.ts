@@ -1,11 +1,8 @@
 import mysql from 'mysql2/promise';
 import fs from 'fs';
 import path from 'path';
-import dotenv from 'dotenv';
 
 // Load env variables
-dotenv.config();
-
 const DB_HOST = process.env.DB_HOST;
 const DB_USER = process.env.DB_USER;
 const DB_PASSWORD = process.env.DB_PASSWORD;
@@ -27,21 +24,12 @@ export function getDatabaseStatus() {
     hasCredentials: !!(DB_HOST && DB_USER && DB_NAME)
   };
 }
-const isVercel = !!process.env.VERCEL;
-const FALLBACK_FILE_PATH = isVercel
-  ? path.join('/tmp', 'mysql_fallback.json')
-  : path.join(process.cwd(), 'data', 'mysql_fallback.json');
+const FALLBACK_FILE_PATH = path.join(process.cwd(), 'data', 'mysql_fallback.json');
 
 // Ensure data directory exists
-if (!isVercel) {
-  const dataDir = path.join(process.cwd(), 'data');
-  if (!fs.existsSync(dataDir)) {
-    try {
-      fs.mkdirSync(dataDir, { recursive: true });
-    } catch (e) {
-      console.error('Failed to create data directory:', e);
-    }
-  }
+const dataDir = path.join(process.cwd(), 'data');
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
 }
 
 // Fallback JSON Structure
@@ -98,15 +86,7 @@ function saveFallbackDB(db: FallbackDB) {
 }
 
 // Try to initialize MySQL Pool
-export async function initializeDatabase(force = false) {
-  if (pool && !force) return;
-  if (pool && force) {
-    try {
-      await pool.end();
-    } catch (e) {}
-    pool = null;
-  }
-
+export async function initializeDatabase() {
   if (DB_HOST && DB_USER && DB_NAME) {
     try {
       console.log(`Attempting to connect to MySQL database at ${DB_HOST}:${DB_PORT}...`);
@@ -143,15 +123,6 @@ export async function initializeDatabase(force = false) {
     isFallbackMode = true;
     lastConnectionError = 'No credentials provided in env variables';
   }
-}
-
-let initPromise: Promise<void> | null = null;
-
-export function ensureDbInitialized() {
-  if (!initPromise) {
-    initPromise = initializeDatabase();
-  }
-  return initPromise;
 }
 
 // Create MySQL Tables automatically if running with a real DB
