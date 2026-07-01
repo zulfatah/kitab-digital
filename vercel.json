@@ -1,23 +1,6 @@
 {
-  "version": 2,
-  "builds": [
-    {
-      "src": "package.json",
-      "use": "@vercel/node"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/api/(.*)",
-      "dest": "server.ts"
-    },
-    {
-      "src": "/assets/(.*)",
-      "dest": "dist/assets/$1"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "dist/$1"
-    }
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "/api/index" },
+    { "source": "/((?!api).*)" , "destination": "/index.html" }
   ]
 }

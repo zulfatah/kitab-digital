@@ -2,8 +2,8 @@ import mysql from 'mysql2/promise';
 import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
-// Load env variables
 
+// Load env variables
 dotenv.config();
 
 const DB_HOST = process.env.DB_HOST;
@@ -89,7 +89,15 @@ function saveFallbackDB(db: FallbackDB) {
 }
 
 // Try to initialize MySQL Pool
-export async function initializeDatabase() {
+export async function initializeDatabase(force = false) {
+  if (pool && !force) return;
+  if (pool && force) {
+    try {
+      await pool.end();
+    } catch (e) {}
+    pool = null;
+  }
+
   if (DB_HOST && DB_USER && DB_NAME) {
     try {
       console.log(`Attempting to connect to MySQL database at ${DB_HOST}:${DB_PORT}...`);
@@ -126,6 +134,15 @@ export async function initializeDatabase() {
     isFallbackMode = true;
     lastConnectionError = 'No credentials provided in env variables';
   }
+}
+
+let initPromise: Promise<void> | null = null;
+
+export function ensureDbInitialized() {
+  if (!initPromise) {
+    initPromise = initializeDatabase();
+  }
+  return initPromise;
 }
 
 // Create MySQL Tables automatically if running with a real DB
