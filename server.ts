@@ -5,7 +5,7 @@ import { createServer as createViteServer } from 'vite';
 import { initializeDatabase, dbService, getDatabaseStatus } from './server/db';
 
 const app = express();
-const PORT = 3000;
+const PORT = 7000;
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_default_secret_jwt_key_987654';
 
 // Use express.json with limit to handle large custom kitab / drafts uploads
