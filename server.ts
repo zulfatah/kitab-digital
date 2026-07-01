@@ -2,7 +2,6 @@ import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import jwt from 'jsonwebtoken';
 import dotenv from 'dotenv';
-import { createServer as createViteServer } from 'vite';
 
 // Configure dotenv
 dotenv.config();
@@ -583,7 +582,13 @@ const optionalAuthenticateJWT = (req: AuthenticatedRequest, res: Response, next:
   // --- DEV & ASSET ROUTING SETUP ---
 
   async function startServer() {
+    if (process.env.VERCEL) {
+      console.log('Running as Vercel Serverless Function - skipping static file hosting and app.listen');
+      return;
+    }
+
     if (process.env.NODE_ENV !== 'production') {
+      const { createServer: createViteServer } = await import('vite');
       const vite = await createViteServer({
         server: { middlewareMode: true },
         appType: 'spa'
@@ -597,13 +602,9 @@ const optionalAuthenticateJWT = (req: AuthenticatedRequest, res: Response, next:
       });
     }
 
-    if (process.env.VERCEL) {
-      console.log('Running as Vercel Serverless Function - listening skipped');
-    } else {
-      app.listen(PORT, '0.0.0.0', () => {
-        console.log(`Express full-stack server running on http://localhost:${PORT}`);
-      });
-    }
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`Express full-stack server running on http://localhost:${PORT}`);
+    });
   }
 
   startServer().catch((e) => {

@@ -27,12 +27,21 @@ export function getDatabaseStatus() {
     hasCredentials: !!(DB_HOST && DB_USER && DB_NAME)
   };
 }
-const FALLBACK_FILE_PATH = path.join(process.cwd(), 'data', 'mysql_fallback.json');
+const isVercel = !!process.env.VERCEL;
+const FALLBACK_FILE_PATH = isVercel
+  ? path.join('/tmp', 'mysql_fallback.json')
+  : path.join(process.cwd(), 'data', 'mysql_fallback.json');
 
 // Ensure data directory exists
-const dataDir = path.join(process.cwd(), 'data');
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
+if (!isVercel) {
+  const dataDir = path.join(process.cwd(), 'data');
+  if (!fs.existsSync(dataDir)) {
+    try {
+      fs.mkdirSync(dataDir, { recursive: true });
+    } catch (e) {
+      console.error('Failed to create data directory:', e);
+    }
+  }
 }
 
 // Fallback JSON Structure
