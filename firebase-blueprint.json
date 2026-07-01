@@ -1,0 +1,125 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "User account information synchronized via Google Login",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Unique Google user ID" },
+        "email": { "type": "string", "description": "Email address of the authenticated user" },
+        "displayName": { "type": "string", "description": "Display name of the user" },
+        "photoURL": { "type": "string", "description": "Profile picture URL" },
+        "createdAt": { "type": "string", "description": "Profile registration timestamp" },
+        "lastLoginAt": { "type": "string", "description": "Latest sign in timestamp" }
+      },
+      "required": ["uid", "email", "displayName"]
+    },
+    "UserPreferences": {
+      "title": "User Preferences",
+      "description": "Custom configuration for the reader interface style, typography, and theme",
+      "type": "object",
+      "properties": {
+        "theme": { "type": "string", "enum": ["light", "dark", "sepia"] },
+        "arabicFontSize": { "type": "integer" },
+        "translationFontSize": { "type": "integer" },
+        "arabicFontFamily": { "type": "string" },
+        "lineSpacing": { "type": "string" }
+      }
+    },
+    "Bookmark": {
+      "title": "Bookmark",
+      "description": "Bookmarks for quick access to kitab chapters",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "kitabId": { "type": "string" },
+        "chapterId": { "type": "string" },
+        "bookmarkedAt": { "type": "string" }
+      }
+    },
+    "Annotation": {
+      "title": "Annotation",
+      "description": "Personal notes and highlighted sentences from kitab texts",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "kitabId": { "type": "string" },
+        "chapterId": { "type": "string" },
+        "paragraphId": { "type": "string" },
+        "highlightedText": { "type": "string" },
+        "note": { "type": "string" },
+        "color": { "type": "string" },
+        "createdAt": { "type": "string" }
+      }
+    },
+    "CustomKitab": {
+      "title": "Custom Kitab",
+      "description": "User created custom manuscripts and writings",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "author": { "type": "string" },
+        "category": { "type": "string" },
+        "createdBy": { "type": "string" }
+      }
+    },
+    "Comment": {
+      "title": "Comment",
+      "description": "Public comments shared on a specific kitab chapter",
+      "type": "object",
+      "properties": {
+        "kitabId": { "type": "string" },
+        "chapterId": { "type": "string" },
+        "authorName": { "type": "string" },
+        "authorEmail": { "type": "string" },
+        "content": { "type": "string" },
+        "createdAt": { "type": "string" }
+      }
+    },
+    "ReadingSchedule": {
+      "title": "Reading Schedule",
+      "description": "Daily reading target parameters and tracker",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string" },
+        "dailyGoalMinutes": { "type": "integer" },
+        "activeDays": { "type": "array" },
+        "reminderTime": { "type": "string" },
+        "currentStreak": { "type": "integer" },
+        "lastReadDate": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Stores registered user profiles synchronized from Google Login"
+    },
+    "/user_preferences/{email}": {
+      "schema": "UserPreferences",
+      "description": "Stores user reading preferences"
+    },
+    "/bookmarks/{bookmarkId}": {
+      "schema": "Bookmark",
+      "description": "Stores bookmarked chapters"
+    },
+    "/annotations/{annotationId}": {
+      "schema": "Annotation",
+      "description": "Stores user highlights and notes"
+    },
+    "/custom_kitabs/{kitabId}": {
+      "schema": "CustomKitab",
+      "description": "Stores custom writings created by users"
+    },
+    "/comments/{commentId}": {
+      "schema": "Comment",
+      "description": "Stores community commentary on book chapters"
+    },
+    "/reading_schedules/{email}": {
+      "schema": "ReadingSchedule",
+      "description": "Stores user reading schedules and streaks"
+    }
+  }
+}

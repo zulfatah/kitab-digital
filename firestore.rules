@@ -1,0 +1,96 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global Catch-all safety net (denies everything not explicitly allowed)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwnerEmail(email) {
+      return isSignedIn() && request.auth.token.email == email;
+    }
+
+    function isOwnerUid(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // 1. Users Collection Rules (User can read any registered profiles, but can only write their own)
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow write: if isOwnerUid(userId) && 
+        request.resource.data.uid == userId && 
+        request.resource.data.email == request.auth.token.email;
+    }
+
+    // 2. User Preferences Collection Rules
+    match /user_preferences/{email} {
+      allow read, write: if isOwnerEmail(email);
+    }
+
+    // 3. Bookmarks Collection Rules
+    match /bookmarks/{bookmarkId} {
+      allow read: if isSignedIn() && resource.data.email == request.auth.token.email;
+      allow create: if isSignedIn() && request.resource.data.email == request.auth.token.email;
+      allow update: if isSignedIn() && resource.data.email == request.auth.token.email && request.resource.data.email == request.auth.token.email;
+      allow delete: if isSignedIn() && resource.data.email == request.auth.token.email;
+    }
+
+    // 4. Annotations Collection Rules
+    match /annotations/{annotationId} {
+      allow read: if isSignedIn() && resource.data.email == request.auth.token.email;
+      allow create: if isSignedIn() && request.resource.data.email == request.auth.token.email;
+      allow update: if isSignedIn() && resource.data.email == request.auth.token.email && request.resource.data.email == request.auth.token.email;
+      allow delete: if isSignedIn() && resource.data.email == request.auth.token.email;
+    }
+
+    // 5. Custom Kitabs Collection Rules
+    match /custom_kitabs/{kitabId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.createdBy == request.auth.token.email;
+      allow update, delete: if isSignedIn() && resource.data.createdBy == request.auth.token.email && (request.resource == null || request.resource.data.createdBy == request.auth.token.email);
+    }
+
+    // 6. Comments Collection Rules
+    match /comments/{commentId} {
+      allow read: if true;
+      allow create: if isSignedIn() && request.resource.data.authorEmail == request.auth.token.email;
+      allow update, delete: if isSignedIn() && resource.data.authorEmail == request.auth.token.email;
+    }
+
+    // 7. Reading Schedules Collection Rules
+    match /reading_schedules/{email} {
+      allow read, write: if isOwnerEmail(email);
+    }
+
+    // 8. Collaboration Drafts Collection Rules
+    match /collab_drafts/{draftId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // 9. Collaboration Merge Requests Collection Rules
+    match /collab_merge_requests/{mrId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // 10. Collaboration History / Commits Collection Rules
+    match /collab_history/{historyId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // 11. Collaboration Presence Collection Rules
+    match /collab_presence/{presenceId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // 12. Collaboration Threaded Comments Collection Rules
+    match /collab_comments/{commentId} {
+      allow read, write: if isSignedIn();
+    }
+  }
+}

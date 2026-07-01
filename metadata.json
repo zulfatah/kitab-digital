@@ -1,0 +1,6 @@
+{
+  "name": "Kitab Digital",
+  "description": "Aplikasi menulis dan membaca kitab digital dengan pencarian cepat, sinkronisasi cloud, mode malam, catatan personal, dan diskusi publik.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
