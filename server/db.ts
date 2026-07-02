@@ -1,6 +1,10 @@
 import mysql from 'mysql2/promise';
 import fs from 'fs';
 import path from 'path';
+import dotenv from 'dotenv';
+
+// Load env variables
+dotenv.config();
 
 // Load env variables
 const DB_HOST = process.env.DB_HOST;

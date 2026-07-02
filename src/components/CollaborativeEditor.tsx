@@ -81,6 +81,53 @@ export default function CollaborativeEditor() {
   const [activeDraft, setActiveDraft] = useState<CollabDraft | null>(null);
   const [activeMR, setActiveMR] = useState<CollabMergeRequest | null>(null);
 
+  // Metadata editing states (similar to KitabWriter)
+  const [isEditingMetadata, setIsEditingMetadata] = useState(false);
+  const [metaTitle, setMetaTitle] = useState('');
+  const [metaAuthor, setMetaAuthor] = useState('');
+  const [metaCategory, setMetaCategory] = useState('');
+  const [metaDescription, setMetaDescription] = useState('');
+  const [metaIsPublic, setMetaIsPublic] = useState(true);
+
+  const categoriesPreset = ['Hadits', 'Fiqih', 'Tafsir', 'Aqidah', 'Akhlak', 'Tasawuf', 'Sejarah', 'Bahasa Arab', 'Lainnya'];
+
+  // Synchronize metadata inputs when selectedKitab is loaded or changed
+  useEffect(() => {
+    if (selectedKitab) {
+      setMetaTitle(selectedKitab.title);
+      setMetaAuthor(selectedKitab.author);
+      setMetaCategory(selectedKitab.category);
+      setMetaDescription(selectedKitab.description || '');
+      setMetaIsPublic(selectedKitab.isPublic !== false);
+    }
+  }, [selectedKitab?.id]);
+
+  const handleSaveMetadata = async () => {
+    if (!selectedKitab) return;
+    if (!metaTitle.trim() || !metaAuthor.trim() || !metaDescription.trim()) {
+      addToast('Data Belum Lengkap', 'Judul, penulis, dan ringkasan kitab wajib diisi.', 'warning');
+      return;
+    }
+
+    const updatedKitab: Kitab = {
+      ...selectedKitab,
+      title: metaTitle.trim(),
+      author: metaAuthor.trim(),
+      category: metaCategory,
+      description: metaDescription.trim(),
+      isPublic: metaIsPublic
+    };
+
+    try {
+      await dbService.saveCustomKitab(selectedKitab.createdBy, updatedKitab);
+      setSelectedKitab(updatedKitab);
+      setIsEditingMetadata(false);
+      addToast('Metadata Diperbarui', 'Metadata naskah kitab induk berhasil diperbarui.', 'success');
+    } catch (e) {
+      addToast('Error', 'Gagal memperbarui metadata kitab.', 'warning');
+    }
+  };
+
   // Determine the maximum authorized role for the current user
   const maxRole = useMemo<CollabRole>(() => {
     if (!selectedKitab) return 'admin';
@@ -1801,31 +1848,132 @@ export default function CollaborativeEditor() {
               
               {/* Draft Info Card */}
               <div className="bg-[#F9F6F0] dark:bg-[#181814] border border-[#E5E1D8] dark:border-[#3A3A30] p-5 rounded-xl shadow-xs space-y-4">
-                <div className="border-b border-stone-100 dark:border-stone-800 pb-2">
+                <div className="border-b border-stone-100 dark:border-stone-800 pb-2 flex items-center justify-between">
                   <h4 className="font-serif font-bold text-stone-800 dark:text-white text-sm">
                     Detail Kitab Induk
                   </h4>
+                  {(selectedKitab.createdBy === currentUserEmail || myRole === 'admin') && (
+                    <button
+                      id="btn-edit-metadata-toggle"
+                      onClick={() => setIsEditingMetadata(!isEditingMetadata)}
+                      className="text-xs text-[#5A5A40] dark:text-[#E5E1D8] hover:underline font-bold flex items-center gap-1 focus:outline-none cursor-pointer"
+                    >
+                      {isEditingMetadata ? 'Batal' : (
+                        <>
+                          <Edit2 className="w-3.5 h-3.5" />
+                          <span>Edit</span>
+                        </>
+                      )}
+                    </button>
+                  )}
                 </div>
-                <div className="space-y-3.5 text-xs text-stone-600 dark:text-stone-300">
-                  <div>
-                    <label className="block text-[10px] font-bold text-stone-400 dark:text-stone-500 uppercase tracking-wider mb-1">Judul Kitab</label>
-                    <p className="font-serif font-bold text-stone-800 dark:text-stone-100 text-sm bg-white dark:bg-stone-900/40 px-3 py-2 border border-stone-200 dark:border-stone-800 rounded-lg">
-                      {selectedKitab.title}
-                    </p>
+
+                {isEditingMetadata ? (
+                  <div className="space-y-3.5 text-xs">
+                    {/* Title */}
+                    <div>
+                      <label htmlFor="meta-title-input" className="block text-[10px] font-bold text-stone-400 dark:text-stone-500 uppercase tracking-wider mb-1">Judul Kitab *</label>
+                      <input
+                        id="meta-title-input"
+                        type="text"
+                        value={metaTitle}
+                        onChange={(e) => setMetaTitle(e.target.value)}
+                        className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-[#E5E1D8] dark:border-[#3A3A30] bg-white dark:bg-[#121210] text-[#333333] dark:text-[#E5E1D8] focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
+                      />
+                    </div>
+
+                    {/* Author */}
+                    <div>
+                      <label htmlFor="meta-author-input" className="block text-[10px] font-bold text-stone-400 dark:text-stone-500 uppercase tracking-wider mb-1">Penulis *</label>
+                      <input
+                        id="meta-author-input"
+                        type="text"
+                        value={metaAuthor}
+                        onChange={(e) => setMetaAuthor(e.target.value)}
+                        className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-[#E5E1D8] dark:border-[#3A3A30] bg-white dark:bg-[#121210] text-[#333333] dark:text-[#E5E1D8] focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
+                      />
+                    </div>
+
+                    {/* Category */}
+                    <div>
+                      <label htmlFor="meta-category-select" className="block text-[10px] font-bold text-stone-400 dark:text-stone-500 uppercase tracking-wider mb-1">Kategori *</label>
+                      <select
+                        id="meta-category-select"
+                        value={metaCategory}
+                        onChange={(e) => setMetaCategory(e.target.value)}
+                        className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-[#E5E1D8] dark:border-[#3A3A30] bg-white dark:bg-[#121210] text-[#333333] dark:text-[#E5E1D8] focus:outline-none focus:ring-1 focus:ring-[#5A5A40] cursor-pointer"
+                      >
+                        {categoriesPreset.map(cat => (
+                          <option key={cat} value={cat}>{cat}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Description */}
+                    <div>
+                      <label htmlFor="meta-description-input" className="block text-[10px] font-bold text-stone-400 dark:text-stone-500 uppercase tracking-wider mb-1">Deskripsi *</label>
+                      <textarea
+                        id="meta-description-input"
+                        rows={2}
+                        value={metaDescription}
+                        onChange={(e) => setMetaDescription(e.target.value)}
+                        className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-[#E5E1D8] dark:border-[#3A3A30] bg-white dark:bg-[#121210] text-[#333333] dark:text-[#E5E1D8] focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
+                      />
+                    </div>
+
+                    {/* Public Status */}
+                    <div className="flex items-center gap-2 pt-1">
+                      <input
+                        id="meta-public-checkbox"
+                        type="checkbox"
+                        checked={metaIsPublic}
+                        onChange={(e) => setMetaIsPublic(e.target.checked)}
+                        className="w-4 h-4 rounded text-[#5A5A40] focus:ring-[#5A5A40] border-[#E5E1D8] dark:border-[#3A3A30] cursor-pointer"
+                      />
+                      <label htmlFor="meta-public-checkbox" className="text-[11px] font-bold text-stone-600 dark:text-stone-300 select-none cursor-pointer">
+                        Publikasikan secara umum
+                      </label>
+                    </div>
+
+                    {/* Action buttons */}
+                    <div className="flex justify-end gap-1.5 pt-2 border-t border-stone-100 dark:border-stone-800">
+                      <button
+                        id="btn-save-metadata"
+                        onClick={handleSaveMetadata}
+                        className="bg-[#5A5A40] hover:bg-[#484833] text-white font-bold text-xs px-3 py-1.5 rounded-lg flex items-center gap-1 focus:outline-none cursor-pointer transition-colors"
+                      >
+                        <Save className="w-3.5 h-3.5" /> Simpan
+                      </button>
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-stone-400 dark:text-stone-500 uppercase tracking-wider mb-1">Kategori</label>
-                    <p className="bg-white dark:bg-stone-900/40 px-3 py-2 border border-stone-200 dark:border-stone-800 rounded-lg">
-                      {selectedKitab.category}
-                    </p>
+                ) : (
+                  <div className="space-y-3.5 text-xs text-stone-600 dark:text-stone-300">
+                    <div>
+                      <label className="block text-[10px] font-bold text-stone-400 dark:text-stone-500 uppercase tracking-wider mb-1">Judul Kitab</label>
+                      <p className="font-serif font-bold text-stone-800 dark:text-stone-100 text-sm bg-white dark:bg-stone-900/40 px-3 py-2 border border-stone-200 dark:border-stone-800 rounded-lg">
+                        {selectedKitab.title}
+                      </p>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-stone-400 dark:text-stone-500 uppercase tracking-wider mb-1">Penulis</label>
+                      <p className="bg-white dark:bg-stone-900/40 px-3 py-2 border border-stone-200 dark:border-stone-800 rounded-lg">
+                        {selectedKitab.author}
+                      </p>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-stone-400 dark:text-stone-500 uppercase tracking-wider mb-1">Kategori</label>
+                      <p className="bg-white dark:bg-stone-900/40 px-3 py-2 border border-stone-200 dark:border-stone-800 rounded-lg">
+                        {selectedKitab.category}
+                      </p>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-stone-400 dark:text-stone-500 uppercase tracking-wider mb-1">Inisiator Draft</label>
+                      <p className="bg-white dark:bg-stone-900/40 px-3 py-2 border border-stone-200 dark:border-stone-800 rounded-lg">
+                        {activeDraft.authorName} ({activeDraft.authorEmail})
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-stone-400 dark:text-stone-500 uppercase tracking-wider mb-1">Inisiator Draft</label>
-                    <p className="bg-white dark:bg-stone-900/40 px-3 py-2 border border-stone-200 dark:border-stone-800 rounded-lg">
-                      {activeDraft.authorName} ({activeDraft.authorEmail})
-                    </p>
-                  </div>
-                </div>
+                )}
               </div>
 
               {/* Kelola Kolaborator (Only visible to the owner of the kitab) */}

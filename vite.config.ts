@@ -23,14 +23,22 @@ export default defineConfig(() => {
           display: 'standalone',
           icons: [
             {
-              src: 'https://cdn-icons-png.flaticon.com/512/3389/3389081.png',
+              src: '/favicon.svg',
               sizes: '192x192',
-              type: 'image/png'
+              type: 'image/svg+xml',
+              purpose: 'any'
             },
             {
-              src: 'https://cdn-icons-png.flaticon.com/512/3389/3389081.png',
+              src: '/favicon.svg',
               sizes: '512x512',
-              type: 'image/png'
+              type: 'image/svg+xml',
+              purpose: 'any'
+            },
+            {
+              src: '/favicon.svg',
+              sizes: '192x192',
+              type: 'image/svg+xml',
+              purpose: 'maskable'
             }
           ]
         }
@@ -49,6 +57,7 @@ export default defineConfig(() => {
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
       allowedHosts: [
         'kitabdigital.zoeldev.my.id',
+        'kitab.zoeldev.my.id',
         'localhost',
         '127.0.0.1',
         '.run.app',

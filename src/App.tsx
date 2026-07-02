@@ -17,8 +17,51 @@ import SettingsModal from './components/SettingsModal';
 import KitabLogo from './components/KitabLogo';
 
 function MainLayout() {
-  const { view, setView, preferences, currentUserEmail, currentUserName } = useApp();
+  const { view, setView, preferences, currentUserEmail, currentUserName, addToast } = useApp();
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
+  const [deferredPrompt, setDeferredPrompt] = React.useState<any>(null);
+  const [showInstallBtn, setShowInstallBtn] = React.useState(false);
+
+  React.useEffect(() => {
+    const handleBeforeInstallPrompt = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      setShowInstallBtn(true);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+
+    window.addEventListener('appinstalled', () => {
+      setDeferredPrompt(null);
+      setShowInstallBtn(false);
+      addToast('Aplikasi Terinstal', 'Terima kasih telah menginstal Kitab Digital!', 'success');
+    });
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    };
+  }, [addToast]);
+
+  const handleInstallClick = async () => {
+    if (!deferredPrompt) {
+      addToast(
+        'Petunjuk Instalasi',
+        'Untuk menginstal: Klik tombol Menu (titik tiga) di browser Anda, lalu pilih "Instal Aplikasi" atau "Tambahkan ke Layar Utama".',
+        'info'
+      );
+      return;
+    }
+    try {
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      if (outcome === 'accepted') {
+        setDeferredPrompt(null);
+        setShowInstallBtn(false);
+      }
+    } catch (err) {
+      console.error('Error saat instalasi:', err);
+    }
+  };
 
   // Sync dark class on document.documentElement based strictly on preferences.theme
   React.useEffect(() => {
@@ -100,7 +143,7 @@ function MainLayout() {
             <div className="flex items-center gap-2">
               <button 
                 onClick={() => setIsSettingsOpen(true)}
-                className="p-2 text-[#5A5A40] dark:text-[#E5E1D8] hover:bg-[#E5E1D8] dark:hover:bg-[#3A3A30] rounded-full transition-colors"
+                className="p-2 text-[#5A5A40] dark:text-[#E5E1D8] hover:bg-[#E5E1D8] dark:hover:bg-[#3A3A30] rounded-full transition-colors focus:outline-none"
               >
                 <Settings className="w-5 h-5" />
               </button>
