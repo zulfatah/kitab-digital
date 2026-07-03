@@ -27,7 +27,9 @@ function MainLayout() {
     addToast,
     showLoginPrompt,
     setShowLoginPrompt,
-    setEditingKitabId
+    setEditingKitabId,
+    setActiveKitabId,
+    setActiveChapterId
   } = useApp();
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
   const [deferredPrompt, setDeferredPrompt] = React.useState<any>(null);
@@ -94,6 +96,24 @@ function MainLayout() {
       root.classList.remove('dark');
     }
   }, [preferences.theme]);
+
+  // Handle deep-linking from URL params
+  React.useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const viewParam = params.get('view');
+    const kitabId = params.get('kitabId');
+    const chapterId = params.get('chapterId');
+    
+    if (viewParam) {
+      setView(viewParam as any);
+      if (kitabId) {
+        setActiveKitabId(kitabId);
+        if (chapterId) {
+          setActiveChapterId(chapterId);
+        }
+      }
+    }
+  }, []);
 
   // Map theme variables for full viewport body
   const themeBgClasses = {

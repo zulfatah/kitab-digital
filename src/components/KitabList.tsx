@@ -8,6 +8,7 @@ import { useApp } from '../contexts/AppContext';
 import { BookOpen, Search, Filter, Bookmark, Sparkles, Plus, BookOpenCheck, ChevronRight, LayoutGrid, List, Trash2, Edit } from 'lucide-react';
 import { motion } from 'motion/react';
 import CustomCombobox from './CustomCombobox';
+import ConfirmationDialog from './ConfirmationDialog';
 
 export default function KitabList() {
   const {
@@ -30,6 +31,7 @@ export default function KitabList() {
   } = useApp();
 
   const [selectedType, setSelectedType] = useState<string>('Semua');
+  const [deleteConfirmation, setDeleteConfirmation] = useState<{ isOpen: boolean; kitabId: string; title: string } | null>(null);
 
   // Layout mode: 'grid' or 'list'
   const [layoutMode, setLayoutMode] = useState<'grid' | 'list'>(() => {
@@ -372,9 +374,7 @@ export default function KitabList() {
                                 id={`btn-delete-kitab-${kitab.id}`}
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  if (window.confirm(`Apakah Anda yakin ingin menghapus karya tulis "${kitab.title}" dari pustaka?`)) {
-                                    deleteCustomKitab(kitab.id);
-                                  }
+                                  setDeleteConfirmation({ isOpen: true, kitabId: kitab.id, title: kitab.title });
                                 }}
                                 className="text-stone-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 p-1 rounded-md transition-all focus:outline-none cursor-pointer"
                                 title="Hapus Karya"
@@ -491,6 +491,17 @@ export default function KitabList() {
           Mulai Menulis
         </button>
       </div>
+      <ConfirmationDialog
+        isOpen={!!deleteConfirmation}
+        onClose={() => setDeleteConfirmation(null)}
+        onConfirm={() => {
+          if (deleteConfirmation) {
+            deleteCustomKitab(deleteConfirmation.kitabId);
+          }
+        }}
+        title="Hapus Karya Tulis"
+        message={`Apakah Anda yakin ingin menghapus karya tulis "${deleteConfirmation?.title}" dari pustaka?`}
+      />
     </div>
   );
 }

@@ -25,7 +25,8 @@ import {
   Edit,
   Sparkles,
   Search,
-  X
+  X,
+  Share2
 } from 'lucide-react';
 import DiscussionPanel from './DiscussionPanel';
 import { motion, AnimatePresence } from 'motion/react';
@@ -97,7 +98,8 @@ export default function KitabReader() {
     setView,
     setEditingKitabId,
     setProfileUserEmail,
-    currentUserEmail
+    currentUserEmail,
+    addToast
   } = useApp();
 
   const [showSettings, setShowSettings] = useState(false);
@@ -512,6 +514,26 @@ export default function KitabReader() {
     }
   };
 
+  const handleShare = () => {
+    const url = new URL(window.location.origin);
+    url.searchParams.set('view', 'reader');
+    url.searchParams.set('kitabId', activeKitab.id);
+    if (activeChapter) {
+      url.searchParams.set('chapterId', activeChapter.id);
+    }
+    
+    if (navigator.share) {
+      navigator.share({
+        title: `Membaca ${activeKitab.title}`,
+        text: `Cek kitab/artikel ini: ${activeKitab.title}`,
+        url: url.toString()
+      }).catch(console.error);
+    } else {
+      navigator.clipboard.writeText(url.toString());
+      addToast('Link Disalin', 'Link telah disalin ke papan klip.', 'info');
+    }
+  };
+
   if (!activeKitab || (!activeChapter && activeKitab.type !== 'artikel')) {
     return (
       <div className="text-center py-16 bg-[#FDFBF7] dark:bg-stone-950 border border-[#E5E1D8] dark:border-[#3A3A30] rounded-2xl">
@@ -742,6 +764,16 @@ export default function KitabReader() {
               {isBookmarked ? <BookmarkCheck className="w-4 h-4 fill-amber-600 text-amber-600" /> : <Bookmark className="w-4 h-4" />}
             </button>
           )}
+
+          {/* Share button */}
+          <button
+            id="btn-share-kitab"
+            onClick={handleShare}
+            className="p-2 sm:p-2.5 bg-white dark:bg-slate-900 border border-[#E5E1D8] dark:border-[#3A3A30] rounded-lg text-[#777266] hover:text-[#5A5A40] dark:hover:text-[#E5E1D8] transition-all focus:outline-none cursor-pointer"
+            title="Bagikan Halaman Ini"
+          >
+            <Share2 className="w-4 h-4" />
+          </button>
 
           {/* Settings button */}
           <button

@@ -8,6 +8,7 @@ import { useApp } from '../contexts/AppContext';
 import { motion } from 'motion/react';
 import { BookOpen, Edit, Trash2, Calendar, ArrowLeft, Loader2, Sparkles, User, FileText, Bookmark, BookCopy, Shield } from 'lucide-react';
 import { Kitab } from '../types';
+import ConfirmationDialog from './ConfirmationDialog';
 
 interface UserProfileData {
   profile: {
@@ -22,6 +23,9 @@ interface UserProfileData {
 }
 
 export default function UserProfile() {
+  const [editingKitabId, setEditingKitabId] = useState<string | null>(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState<{ isOpen: boolean; kitabId: string; title: string } | null>(null);
+
   const {
     profileUserEmail,
     setProfileUserEmail,
@@ -30,7 +34,7 @@ export default function UserProfile() {
     setActiveChapterId,
     currentUserEmail,
     preferences,
-    setEditingKitabId,
+    setEditingKitabId: setAppEditingKitabId,
     deleteCustomKitab
   } = useApp();
 
@@ -66,6 +70,11 @@ export default function UserProfile() {
             throw new Error('Profil pengguna belum terdaftar atau tidak memiliki karya publik.');
           }
           throw new Error('Gagal mengambil informasi profil pengguna.');
+        }
+
+        const contentType = res.headers.get('content-type');
+        if (contentType && contentType.includes('text/html')) {
+          throw new Error('Server mengembalikan HTML, bukan JSON. Pastikan backend Node.js berjalan dengan benar di VPS Anda dan routing /api tidak diblokir oleh Nginx/server statis.');
         }
 
         const profileData = await res.json();
@@ -381,12 +390,7 @@ export default function UserProfile() {
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                if (window.confirm(`Apakah Anda yakin ingin menghapus karya tulis "${kitab.title}"?`)) {
-                                  deleteCustomKitab(kitab.id).then(() => {
-                                    // Refresh local state if needed
-                                    setData(prev => prev ? { ...prev, kitabs: prev.kitabs.filter(k => k.id !== kitab.id) } : prev);
-                                  });
-                                }
+                                setDeleteConfirmation({ isOpen: true, kitabId: kitab.id, title: kitab.title });
                               }}
                               className="text-stone-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 p-1.5 rounded-lg transition-all focus:outline-none cursor-pointer"
                               title="Hapus Karya"
@@ -427,6 +431,20 @@ export default function UserProfile() {
           )}
         </div>
       </div>
+      <ConfirmationDialog
+        isOpen={!!deleteConfirmation}
+        onClose={() => setDeleteConfirmation(null)}
+        onConfirm={() => {
+          if (deleteConfirmation) {
+            deleteCustomKitab(deleteConfirmation.kitabId).then(() => {
+              // Refresh local state if needed
+              setData(prev => prev ? { ...prev, kitabs: prev.kitabs.filter(k => k.id !== deleteConfirmation.kitabId) } : prev);
+            });
+          }
+        }}
+        title="Hapus Karya Tulis"
+        message={`Apakah Anda yakin ingin menghapus karya tulis "${deleteConfirmation?.title}"?`}
+      />
     </div>
   );
 }

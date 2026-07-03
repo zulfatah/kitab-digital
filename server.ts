@@ -2,10 +2,11 @@ import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import jwt from 'jsonwebtoken';
 import { createServer as createViteServer } from 'vite';
+import { GoogleGenAI } from '@google/genai';
 import { initializeDatabase, dbService, getDatabaseStatus } from './server/db';
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT) || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_default_secret_jwt_key_987654';
 
 // Use express.json with limit to handle large custom kitab / drafts uploads
@@ -57,6 +58,60 @@ async function startServer() {
   await initializeDatabase();
 
   // --- API ROUTES ---
+  
+  // Gemini AI text correction endpoint
+  app.post('/api/gemini/fix-text', async (req: Request, res: Response) => {
+    try {
+      const { text, instruction, mode } = req.body;
+      if (!text && !instruction) {
+        return res.status(400).json({ error: 'Teks atau instruksi tidak boleh kosong' });
+      }
+
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        return res.status(500).json({ 
+          error: 'Kunci API Gemini (GEMINI_API_KEY) belum dikonfigurasi di server. Silakan hubungi administrator atau tambahkan kunci di menu Settings > Secrets.' 
+        });
+      }
+
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          }
+        }
+      });
+
+      let systemInstruction = 'Anda adalah editor, asisten penulisan, dan penyunting profesional bahasa Indonesia untuk platform Khazanah Digital.\n' +
+        'Tugas Anda adalah memproses teks input agar tampak sangat rapi, memiliki tanda baca yang benar, tata bahasa yang sempurna, spasi yang presisi, dan struktur kalimat yang mengalir profesional.\n' +
+        'PENTING: Hasilkan teks yang padat dan rapat. JANGAN menambahkan spasi berlebihan antar paragraf. Hindari penggunaan tag <br> ganda (<br><br>) atau baris kosong yang tidak perlu. Gunakan struktur HTML yang efisien dan rapat.\n' +
+        'Teks input mungkin memiliki tag HTML (seperti <b>, <i>, <u>, <div>, <p>, <br>, <ul>, <li>, dll.). Anda WAJIB mempertahankan semua tag HTML dan strukturnya, atau menghasilkan output berformat HTML yang rapi jika diperintahkan membuat struktur baru.\n' +
+        'Kembalikan HANYA hasil teks akhir yang siap digunakan langsung di editor kaya teks. Jangan menyertakan kata pengantar, penjelasan tambahan, penutup, atau pembungkus kode seperti ```html atau ```.';
+
+      if (instruction) {
+        systemInstruction += `\n\nPERINTAH KHUSUS PENGGUNA:\nAnda harus mengikuti perintah tambahan dari penulis ini dengan teliti: "${instruction}". Lakukan modifikasi atau penambahan pada teks yang diberikan sesuai perintah tersebut dengan profesional, namun tetap pertahankan gaya bahasa yang indah dan format HTML yang sesuai.`;
+      } else if (mode === 'structure') {
+        systemInstruction += '\n\nFOKUS UTAMA: Buat struktur tulisan yang rapi, buat paragraf terstruktur, tata tanda baca yang benar, tata letak yang profesional, dan pastikan keterbacaannya tinggi.';
+      }
+
+      const prompt = `Berikut adalah teks editor yang perlu diproses:\n\n--- MULAI TEKS ---\n${text || ''}\n--- AKHIR TEKS ---\n\n${instruction ? `Instruksi tambahan dari penulis: ${instruction}` : ''}`;
+      
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.5-flash',
+        contents: prompt,
+        config: {
+          systemInstruction,
+        }
+      });
+
+      const fixedText = (response.text || '').replace(/^```html\s*/i, '').replace(/```$/, '').trim();
+      res.json({ fixedText });
+    } catch (e) {
+      console.error('Error with Gemini API text fix:', e);
+      res.status(500).json({ error: 'Gagal memproses teks dengan AI', details: e instanceof Error ? e.message : String(e) });
+    }
+  });
 
   // Diagnostic Endpoint: Check Database Connection Status
   app.get('/api/db-status', (req: Request, res: Response) => {

@@ -19,8 +19,10 @@ import {
   RotateCw,
   Trash2,
   Sparkles,
-  Type
+  Type,
+  Loader2
 } from 'lucide-react';
+import { useApp } from '../contexts/AppContext';
 
 interface RichTextEditorProps {
   id?: string;
@@ -45,6 +47,11 @@ export default function RichTextEditor({
 }: RichTextEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
   const isTypingRef = useRef(false);
+  const { addToast } = useApp();
+  const [isAiCorrecting, setIsAiCorrecting] = useState(false);
+  const [lastEditorState, setLastEditorState] = useState<string | null>(null);
+  const [showAiPanel, setShowAiPanel] = useState(false);
+  const [customAiPrompt, setCustomAiPrompt] = useState('');
 
   const [editorState, setEditorState] = useState({
     bold: false,
@@ -92,6 +99,58 @@ export default function RichTextEditor({
     setTimeout(() => {
       isTypingRef.current = false;
     }, 50);
+  };
+
+  const handleAiRequest = async (customInstruction?: string, mode?: string) => {
+    if (!editorRef.current) return;
+    const currentHTML = editorRef.current.innerHTML;
+    setLastEditorState(currentHTML);
+    const plainText = editorRef.current.innerText || '';
+    
+    if (!plainText.trim() && !customInstruction) {
+      addToast('Teks Kosong', 'Silakan tulis sesuatu sebelum menggunakan asisten AI.', 'info');
+      return;
+    }
+
+    setIsAiCorrecting(true);
+    try {
+      const token = localStorage.getItem('auth_token');
+      const headers: HeadersInit = {
+        'Content-Type': 'application/json'
+      };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
+      const res = await fetch('/api/gemini/fix-text', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ 
+          text: currentHTML,
+          instruction: customInstruction,
+          mode
+        })
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Gagal memproses teks dengan AI');
+      }
+
+      const data = await res.json();
+      if (data.fixedText) {
+        editorRef.current.innerHTML = data.fixedText;
+        handleInput();
+        addToast('Penyuntingan AI Berhasil', 'Tulisan Anda telah disempurnakan dengan bantuan asisten AI.', 'success');
+      } else {
+        throw new Error('Hasil perbaikan AI kosong.');
+      }
+    } catch (error: any) {
+      console.error('AI Request error:', error);
+      addToast('Gagal Memproses Teks', error.message || 'Terjadi kesalahan saat memproses perbaikan AI.', 'error');
+    } finally {
+      setIsAiCorrecting(false);
+    }
   };
 
   const updateToolbarStates = () => {
@@ -304,8 +363,30 @@ export default function RichTextEditor({
             ))}
           </div>
 
+          {/* AI Assistant */}
+          <div className="flex items-center gap-1.5 ml-auto border-r border-[#E5E1D8] dark:border-stone-800 pr-2 mr-1">
+            <button
+              id="btn-ai-fix-text"
+              type="button"
+              onClick={() => setShowAiPanel(!showAiPanel)}
+              className={`px-2 py-1 rounded-md flex items-center gap-1 text-[11px] font-medium transition-all cursor-pointer border ${
+                showAiPanel || isAiCorrecting
+                  ? 'bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border-amber-300/60' 
+                  : 'bg-amber-50 dark:bg-amber-950/10 text-amber-600 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-950/20 border-amber-200/50 dark:border-amber-900/30'
+              }`}
+              title="Gunakan Asisten Penulisan AI"
+            >
+              {isAiCorrecting ? (
+                <Loader2 className="w-3 h-3 animate-spin" />
+              ) : (
+                <Sparkles className="w-3 h-3 text-amber-500 animate-pulse" />
+              )}
+              <span>Asisten AI</span>
+            </button>
+          </div>
+
           {/* Undo / Redo & Clear Format */}
-          <div className="flex items-center gap-0.5 ml-auto">
+          <div className="flex items-center gap-0.5">
             <button
               type="button"
               onMouseDown={(e) => {
@@ -339,6 +420,111 @@ export default function RichTextEditor({
             >
               <Trash2 className="w-3.5 h-3.5" />
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* AI PANEL */}
+      {showAiPanel && !disabled && (
+        <div className="bg-amber-50/75 dark:bg-amber-950/15 border-b border-[#E5E1D8] dark:border-[#3A3A30] p-3 text-stone-800 dark:text-stone-200 select-none animate-fade-in">
+          <div className="flex flex-col gap-2.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-amber-800 dark:text-amber-400 flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                Asisten Penulisan AI Khazanah
+              </span>
+              <button 
+                type="button"
+                onClick={() => setShowAiPanel(false)}
+                className="text-stone-400 hover:text-stone-600 dark:hover:text-stone-200 text-xs focus:outline-none cursor-pointer"
+              >
+                Tutup
+              </button>
+            </div>
+
+            {/* Prompt Input */}
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={customAiPrompt}
+                onChange={(e) => setCustomAiPrompt(e.target.value)}
+                placeholder="Perintahkan AI... (misal: 'Tambahkan pohon struktur/hierarki', 'Ringkas tulisan ini', 'Buat lebih formal')"
+                className="flex-1 px-3 py-1.5 text-xs rounded-lg border border-[#E5E1D8] dark:border-stone-800 bg-white dark:bg-stone-900 focus:outline-none focus:ring-1 focus:ring-amber-500 text-stone-900 dark:text-white"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleAiRequest(customAiPrompt);
+                  }
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => handleAiRequest(customAiPrompt)}
+                disabled={isAiCorrecting}
+                className="px-3.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-medium text-xs flex items-center gap-1 cursor-pointer transition-all disabled:opacity-50 shrink-0"
+              >
+                {isAiCorrecting ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <Sparkles className="w-3 h-3" />
+                )}
+                <span>Kirim</span>
+              </button>
+              {lastEditorState && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (editorRef.current) {
+                      editorRef.current.innerHTML = lastEditorState;
+                      setLastEditorState(null);
+                      handleInput();
+                      addToast('Penyuntingan Dibatalkan', 'Teks telah dikembalikan ke kondisi sebelumnya.', 'info');
+                    }
+                  }}
+                  disabled={isAiCorrecting}
+                  className="px-3.5 py-1.5 rounded-lg bg-stone-100 hover:bg-stone-200 dark:bg-stone-800 dark:hover:bg-stone-700 text-stone-700 dark:text-stone-300 font-medium text-xs flex items-center gap-1 cursor-pointer transition-all disabled:opacity-50 shrink-0"
+                >
+                  <span>Undo</span>
+                </button>
+              )}
+            </div>
+
+            {/* Quick Presets */}
+            <div className="flex flex-wrap items-center gap-1.5 text-[10px] sm:text-[11px]">
+              <span className="text-stone-400 dark:text-stone-500 font-medium">Pilihan Cepat:</span>
+              <button
+                type="button"
+                onClick={() => handleAiRequest(undefined, 'typo')}
+                disabled={isAiCorrecting}
+                className="px-2 py-1 rounded bg-white dark:bg-stone-900 border border-[#E5E1D8] dark:border-stone-800 hover:border-amber-400 hover:text-amber-700 dark:hover:text-amber-300 transition-all cursor-pointer text-[#5A5A40] dark:text-[#A8A890]"
+              >
+                ✨ Perbaiki Ejaan & Typo
+              </button>
+              <button
+                type="button"
+                onClick={() => handleAiRequest(undefined, 'structure')}
+                disabled={isAiCorrecting}
+                className="px-2 py-1 rounded bg-white dark:bg-stone-900 border border-[#E5E1D8] dark:border-stone-800 hover:border-amber-400 hover:text-amber-700 dark:hover:text-amber-300 transition-all cursor-pointer text-[#5A5A40] dark:text-[#A8A890]"
+              >
+                📋 Rapikan Struktur & Tanda Baca
+              </button>
+              <button
+                type="button"
+                onClick={() => handleAiRequest('Ubah gaya penulisan teks ini agar terlihat sangat formal, akademis, dan bernada ilmiah tanpa mengubah maknanya.')}
+                disabled={isAiCorrecting}
+                className="px-2 py-1 rounded bg-white dark:bg-stone-900 border border-[#E5E1D8] dark:border-stone-800 hover:border-amber-400 hover:text-amber-700 dark:hover:text-amber-300 transition-all cursor-pointer text-[#5A5A40] dark:text-[#A8A890]"
+              >
+                🎓 Ubah ke Akademis/Formal
+              </button>
+              <button
+                type="button"
+                onClick={() => handleAiRequest('Ubah gaya bahasa agar lebih mengalir indah, estetis, dan kaya akan tata bahasa sastra yang memukau.')}
+                disabled={isAiCorrecting}
+                className="px-2 py-1 rounded bg-white dark:bg-stone-900 border border-[#E5E1D8] dark:border-stone-800 hover:border-amber-400 hover:text-amber-700 dark:hover:text-amber-300 transition-all cursor-pointer text-[#5A5A40] dark:text-[#A8A890]"
+              >
+                📖 Sastra & Kreatif
+              </button>
+            </div>
           </div>
         </div>
       )}
