@@ -15,7 +15,9 @@ export default function ProfileDropdown() {
     currentUserPhotoURL,
     loginWithGoogle,
     loginUser,
-    logoutUser
+    logoutUser,
+    setView,
+    setProfileUserEmail
   } = useApp();
 
   const [isOpen, setIsOpen] = useState(false);
@@ -139,17 +141,32 @@ export default function ProfileDropdown() {
                   Perpustakaan kitab, catatan sorotan, penanda bab, dan target harian Anda tersinkronisasi otomatis di Cloud.
                 </div>
 
-                <button
-                  id="btn-dropdown-logout"
-                  onClick={() => {
-                    logoutUser();
-                    setIsOpen(false);
-                  }}
-                  className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-bold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100/50 dark:bg-red-950/20 dark:hover:bg-red-950/40 border border-red-200/50 dark:border-red-900/30 rounded-lg transition-all cursor-pointer"
-                >
-                  <LogOut className="w-3.5 h-3.5" />
-                  <span>Keluar Akun</span>
-                </button>
+                <div className="pt-1 flex flex-col gap-1.5">
+                  <button
+                    id="btn-dropdown-my-profile"
+                    onClick={() => {
+                      setProfileUserEmail(currentUserEmail);
+                      setView('profile');
+                      setIsOpen(false);
+                    }}
+                    className="w-full flex items-center justify-start gap-2.5 px-3 py-2 text-xs font-bold text-[#5A5A40] dark:text-[#E5E1D8] hover:bg-[#E5E1D8] dark:hover:bg-[#3A3A30] rounded-lg transition-all cursor-pointer border border-[#E5E1D8]/40 dark:border-[#3A3A30]/40"
+                  >
+                    <User className="w-3.5 h-3.5 text-[#5A5A40] dark:text-[#E5E1D8]" />
+                    <span>Profil Saya & Karya</span>
+                  </button>
+
+                  <button
+                    id="btn-dropdown-logout"
+                    onClick={() => {
+                      logoutUser();
+                      setIsOpen(false);
+                    }}
+                    className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-bold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100/50 dark:bg-red-950/20 dark:hover:bg-red-950/40 border border-red-200/50 dark:border-red-900/30 rounded-lg transition-all cursor-pointer"
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                    <span>Keluar Akun</span>
+                  </button>
+                </div>
               </div>
             ) : (
               /* Signed Out/Guest Profile View */

@@ -19,9 +19,10 @@ export interface UserPreferences {
 export interface Paragraph {
   id: string; // e.g., 'p-1', 'p-2'
   arabic: string; // Teks Arab
-  translation: string; // Terjemahan Indonesia
+  translation?: string; // Terjemahan Indonesia
   explanation?: string; // Tafsir / Penjelasan
   page?: number; // Halaman ke-
+  pageLabel?: string; // Kustom label untuk halaman
 }
 
 export interface Chapter {
@@ -40,9 +41,11 @@ export interface Kitab {
   author: string;
   category: string;
   description: string;
+  type?: 'artikel' | 'buku' | 'kitab'; // New type field
+  content?: string; // Content field for articles
   isDefault?: boolean;
   isPublic?: boolean;
-  chapters: Chapter[];
+  chapters?: Chapter[];
   createdAt: string;
   createdBy: string; // User email
 }
@@ -308,7 +311,7 @@ export function recalculateHierarchicalNumbers(chapters: Chapter[]): Chapter[] {
       ...ch,
       number: numStr,
       isSubChapter: !!ch.parentId,
-      nodeType: ch.parentId ? (ch.nodeType && ch.nodeType !== 'Bab' ? ch.nodeType : 'Fasal') : (ch.nodeType && ch.nodeType !== 'Fasal' ? ch.nodeType : 'Bab')
+      nodeType: ch.nodeType || ""
     };
     result.push(updated);
 
@@ -339,7 +342,7 @@ export function migrateChaptersToTree(chapters: Chapter[]): Chapter[] {
   return (chapters || []).map(ch => {
     const migrated = { ...ch };
     if (!migrated.nodeType) {
-      migrated.nodeType = migrated.isSubChapter ? 'Fasal' : 'Bab';
+      migrated.nodeType = "";
     }
     if (migrated.isSubChapter) {
       if (latestParentId && !migrated.parentId) {

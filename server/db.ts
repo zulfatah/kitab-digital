@@ -287,6 +287,12 @@ async function runSchemaInitialization() {
     // Column already exists or table does not exist yet (fallback is handled)
   }
   try {
+    await pool.query('ALTER TABLE custom_kitabs ADD COLUMN type VARCHAR(32) DEFAULT "kitab"');
+  } catch (err) {}
+  try {
+    await pool.query('ALTER TABLE custom_kitabs ADD COLUMN content LONGTEXT DEFAULT NULL');
+  } catch (err) {}
+  try {
     await pool.query('ALTER TABLE user_preferences ADD COLUMN explanationFontSize INT DEFAULT 14');
   } catch (err) {
     // Column already exists or table does not exist yet
@@ -536,6 +542,8 @@ export const dbService = {
         }
         return {
           ...r,
+          type: r.type || 'kitab',
+          content: r.content || '',
           isPublic: r.isPublic === 1 || r.isPublic === true,
           chapters,
           collaborators
@@ -559,6 +567,8 @@ export const dbService = {
         }
         return {
           ...k,
+          type: k.type || 'kitab',
+          content: k.content || '',
           isPublic: k.isPublic === 1 || k.isPublic === true,
           chapters,
           collaborators
@@ -574,10 +584,12 @@ export const dbService = {
     };
     const chaptersJson = JSON.stringify(payload);
     const isPublicVal = kitab.isPublic ? 1 : 0;
+    const typeVal = kitab.type || 'kitab';
+    const contentVal = kitab.content || '';
     if (!isFallbackMode && pool) {
-      const q = `INSERT INTO custom_kitabs (id, createdBy, title, author, description, category, chaptersJson, createdAt, isPublic)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                 ON DUPLICATE KEY UPDATE title = ?, author = ?, description = ?, category = ?, chaptersJson = ?, isPublic = ?`;
+      const q = `INSERT INTO custom_kitabs (id, createdBy, title, author, description, category, chaptersJson, createdAt, isPublic, type, content)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE title = ?, author = ?, description = ?, category = ?, chaptersJson = ?, isPublic = ?, type = ?, content = ?`;
       await pool.query(q, [
         kitab.id,
         kitab.createdBy,
@@ -588,18 +600,24 @@ export const dbService = {
         chaptersJson,
         kitab.createdAt,
         isPublicVal,
+        typeVal,
+        contentVal,
         kitab.title,
         kitab.author,
         kitab.description,
         kitab.category,
         chaptersJson,
-        isPublicVal
+        isPublicVal,
+        typeVal,
+        contentVal
       ]);
     } else {
       const db = loadFallbackDB();
       const idx = db.custom_kitabs.findIndex(k => k.id === kitab.id);
       const entry = {
         ...kitab,
+        type: typeVal,
+        content: contentVal,
         chaptersJson, // Keep synchronized
         chapters: kitab.chapters || [],
         collaborators: kitab.collaborators || [],

@@ -63,6 +63,140 @@ const AutoResizeTextarea = React.forwardRef<HTMLTextAreaElement, AutoResizeTexta
 );
 AutoResizeTextarea.displayName = 'AutoResizeTextarea';
 
+interface DiffWord {
+  type: 'added' | 'deleted' | 'equal';
+  text: string;
+}
+
+function computeWordDiff(oldStr: string = '', newStr: string = ''): DiffWord[] {
+  const cleanOld = (oldStr || '').trim();
+  const cleanNew = (newStr || '').trim();
+  if (!cleanOld && !cleanNew) return [];
+  if (!cleanOld) {
+    return cleanNew.split(/\s+/).filter(Boolean).map(w => ({ type: 'added', text: w }));
+  }
+  if (!cleanNew) {
+    return cleanOld.split(/\s+/).filter(Boolean).map(w => ({ type: 'deleted', text: w }));
+  }
+
+  const oldWords = cleanOld.split(/\s+/).filter(Boolean);
+  const newWords = cleanNew.split(/\s+/).filter(Boolean);
+
+  const dp: number[][] = Array.from({ length: oldWords.length + 1 }, () =>
+    Array(newWords.length + 1).fill(0)
+  );
+
+  for (let i = 1; i <= oldWords.length; i++) {
+    for (let j = 1; j <= newWords.length; j++) {
+      if (oldWords[i - 1] === newWords[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1] + 1;
+      } else {
+        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+      }
+    }
+  }
+
+  const result: DiffWord[] = [];
+  let i = oldWords.length;
+  let j = newWords.length;
+
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && oldWords[i - 1] === newWords[j - 1]) {
+      result.unshift({ type: 'equal', text: oldWords[i - 1] });
+      i--;
+      j--;
+    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      result.unshift({ type: 'added', text: newWords[j - 1] });
+      j--;
+    } else {
+      result.unshift({ type: 'deleted', text: oldWords[i - 1] });
+      i--;
+    }
+  }
+
+  return result;
+}
+
+function stripHtmlTags(str: string): string {
+  if (!str) return '';
+  // Remove HTML tags
+  let clean = str.replace(/<[^>]*>/g, ' ');
+  // Decode HTML entities
+  clean = clean
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+  // Normalize spacing
+  return clean.replace(/\s+/g, ' ').trim();
+}
+
+interface HighlightedDiffTextProps {
+  oldText?: string;
+  newText?: string;
+  mode: 'old' | 'new';
+  isArabic?: boolean;
+}
+
+const HighlightedDiffText: React.FC<HighlightedDiffTextProps> = ({ oldText = '', newText = '', mode, isArabic = false }) => {
+  const cleanedOld = useMemo(() => stripHtmlTags(oldText), [oldText]);
+  const cleanedNew = useMemo(() => stripHtmlTags(newText), [newText]);
+
+  const diffs = useMemo(() => {
+    return computeWordDiff(cleanedOld, cleanedNew);
+  }, [cleanedOld, cleanedNew]);
+
+  const elements: React.ReactNode[] = [];
+  diffs.forEach((word, idx) => {
+    if (mode === 'old') {
+      if (word.type === 'added') return;
+      if (word.type === 'deleted') {
+        elements.push(
+          <span 
+            key={`del-${idx}`} 
+            className="px-1 bg-red-100 dark:bg-red-950/80 text-red-700 dark:text-red-300 line-through rounded font-medium border-b border-red-300 dark:border-red-900 break-words"
+          >
+            {word.text}
+          </span>
+        );
+      } else {
+        elements.push(<span key={`eq-${idx}`} className="break-words">{word.text}</span>);
+      }
+    } else {
+      if (word.type === 'deleted') return;
+      if (word.type === 'added') {
+        elements.push(
+          <span 
+            key={`add-${idx}`} 
+            className="px-1 bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 font-bold underline rounded decoration-emerald-500 decoration-2 border-b border-emerald-300 dark:border-emerald-900 break-words"
+          >
+            {word.text}
+          </span>
+        );
+      } else {
+        elements.push(<span key={`eq-${idx}`} className="break-words">{word.text}</span>);
+      }
+    }
+    // Tambahkan spasi antar kata agar pembungkusan baris (word-wrap) berjalan alami di layar kecil
+    elements.push(<span key={`sp-${idx}`} className="select-none"> </span>);
+  });
+
+  return (
+    <div 
+      className={`block w-full break-words whitespace-pre-wrap ${
+        isArabic 
+          ? 'text-right font-serif text-sm sm:text-base md:text-lg leading-loose' 
+          : 'text-left text-[10px] sm:text-[11px] md:text-xs leading-relaxed'
+      }`}
+      dir={isArabic ? 'rtl' : 'ltr'}
+    >
+      {elements}
+    </div>
+  );
+};
+
 export default function CollaborativeEditor() {
   const { 
     customKitabs, 
@@ -630,7 +764,7 @@ export default function CollaborativeEditor() {
       id: `ch_${Date.now()}_${Math.random().toString(36).substring(7)}`,
       title: `Node Utama Baru #${chNum}`,
       number: chNum,
-      nodeType: 'Bab',
+      nodeType: "",
       paragraphs: [
         {
           id: `p_${Date.now()}_${Math.random().toString(36).substring(7)}`,
@@ -675,7 +809,7 @@ export default function CollaborativeEditor() {
       title: `Sub-Node Baru #${subNum}`,
       number: chNum,
       parentId: activeCh.id,
-      nodeType: 'Fasal',
+      nodeType: "",
       paragraphs: [
         {
           id: `p_${Date.now()}_${Math.random().toString(36).substring(7)}`,
@@ -1170,7 +1304,7 @@ export default function CollaborativeEditor() {
         id: `com_sys_${Date.now()}`,
         mrId: activeMR.id,
         kitabId: selectedKitab.id,
-        authorEmail: 'system@kitabdigital.org',
+        authorEmail: 'system@khazanahdigital.org',
         authorName: 'Sistem Tashih',
         content: `**Mushahhih (${currentUserName})** menandai usulan sebagai **${action.toUpperCase()}**.\n\n*Catatan:* ${feedback || 'Tidak ada catatan tambahan.'}`,
         createdAt: new Date().toISOString()
@@ -1235,9 +1369,9 @@ export default function CollaborativeEditor() {
       };
       await dbService.saveCollabDraft(updatedDraft);
 
-      addToast('Penggabungan Berhasil!', 'Draft telah resmi dipublikasikan ke kitab utama (Main Branch)!', 'success');
+      addToast('Penggabungan Berhasil!', 'Draft telah resmi dipublikasikan ke naskah utama (Main Branch)!', 'success');
     } catch (e) {
-      addToast('Error', 'Gagal melakukan penggabungan ke kitab utama.', 'warning');
+      addToast('Error', 'Gagal melakukan penggabungan ke naskah utama.', 'warning');
     }
   };
 
@@ -1254,7 +1388,7 @@ export default function CollaborativeEditor() {
 
     triggerConfirm(
       'Konfirmasi Rollback',
-      `Apakah Anda yakin ingin mengembalikan kitab "${selectedKitab.title}" ke versi sebelum commit "${history.message}"?`,
+      `Apakah Anda yakin ingin mengembalikan karya tulis "${selectedKitab.title}" ke versi sebelum commit "${history.message}"?`,
       async () => {
         try {
           const targetChapters = history.previousChapters;
@@ -1305,7 +1439,7 @@ export default function CollaborativeEditor() {
           }
 
           setActivePageNumber(1);
-          addToast('Rollback Berhasil', 'Kitab berhasil dikembalikan ke versi sebelumnya.', 'success');
+          addToast('Rollback Berhasil', 'Karya berhasil dikembalikan ke versi sebelumnya.', 'success');
         } catch (e) {
           addToast('Error', 'Gagal melakukan rollback.', 'warning');
         }
@@ -1387,7 +1521,7 @@ export default function CollaborativeEditor() {
           </div>
           <div>
             <h2 className="text-base sm:text-lg font-serif font-bold text-[#5A5A40] dark:text-[#E5E1D8]">
-              Sistem Kolaborasi Kitab (RBAC)
+              Sistem Kolaborasi Khazanah Digital (RBAC)
             </h2>
             <p className="text-xs text-[#999488]">
               Tulis, tinjau, diskusikan, dan selaraskan karya ilmiah bersama kontributor lain.
@@ -1427,8 +1561,8 @@ export default function CollaborativeEditor() {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-2 bg-stone-100 dark:bg-[#121210] p-1 rounded-xl">
           {[
             { id: 'dashboard', label: 'Beranda & Statistik', icon: Activity },
-            { id: 'kitab_hub', label: 'Majelis Kitab', icon: BookOpen },
-            { id: 'mr_list', label: 'Usulan Tashih (MR)', icon: GitPullRequest },
+            { id: 'kitab_hub', label: 'Majelis Karya', icon: BookOpen },
+            { id: 'mr_list', label: 'Usulan Tashih', icon: GitPullRequest },
             { id: 'history_list', label: 'Riwayat & Pemulihan', icon: History }
           ].map((item) => {
             const Icon = item.icon;
@@ -1470,7 +1604,7 @@ export default function CollaborativeEditor() {
               <ArrowLeft className="w-4 h-4" />
             </button>
             <div>
-              <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500 dark:text-stone-400">Kitab yang Dipilih</span>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-stone-500 dark:text-stone-400">Karya yang Dipilih</span>
               <h3 className="text-sm font-serif font-bold text-stone-800 dark:text-[#E5E1D8]">
                 {selectedKitab.title} <span className="font-mono text-[10px] text-stone-400">({selectedKitab.author})</span>
               </h3>
@@ -1494,7 +1628,7 @@ export default function CollaborativeEditor() {
             </div>
             {activeDraft && (
               <span className="text-xs bg-[#5A5A40]/10 text-[#5A5A40] border border-[#5A5A40]/30 px-2 py-1 rounded-md font-bold flex items-center gap-1 animate-pulse">
-                <GitBranch className="w-3.5 h-3.5" /> Draft: {activeDraft.title}
+                <GitBranch className="w-3.5 h-3.5" /> Musawwadah: {activeDraft.title}
               </span>
             )}
           </div>
@@ -1506,10 +1640,10 @@ export default function CollaborativeEditor() {
         <div className="space-y-6">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {[
-              { label: 'Kitab Terdaftar', value: stats.totalKitabs, icon: BookOpen, color: 'text-blue-500 bg-blue-50 dark:bg-blue-950/20' },
-              { label: 'Rancangan Draft', value: stats.totalDrafts, icon: GitBranch, color: 'text-amber-500 bg-amber-50 dark:bg-amber-950/20' },
+              { label: 'Karya Terdaftar', value: stats.totalKitabs, icon: BookOpen, color: 'text-blue-500 bg-blue-50 dark:bg-blue-950/20' },
+              { label: 'Musawwadah (Draft)', value: stats.totalDrafts, icon: GitBranch, color: 'text-amber-500 bg-amber-50 dark:bg-amber-950/20' },
               { label: 'Usulan Tashih Aktif', value: stats.openMRs, icon: GitPullRequest, color: 'text-purple-500 bg-purple-50 dark:bg-purple-950/20' },
-              { label: 'Selesai Ditashih & Gabung', value: stats.mergedMRs, icon: CheckCircle, color: 'text-emerald-500 bg-emerald-50 dark:bg-emerald-950/20' }
+              { label: 'Selesai Tashih & Penyatuan', value: stats.mergedMRs, icon: CheckCircle, color: 'text-emerald-500 bg-emerald-50 dark:bg-emerald-950/20' }
             ].map((stat, idx) => (
               <div key={idx} className="bg-white dark:bg-[#181814] p-5 rounded-xl border border-[#E5E1D8] dark:border-[#3A3A30] shadow-xs space-y-2">
                 <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${stat.color}`}>
@@ -1525,14 +1659,14 @@ export default function CollaborativeEditor() {
             {/* Today's Activity Timeline / Guide */}
             <div className="md:col-span-2 bg-white dark:bg-[#181814] p-5 rounded-xl border border-[#E5E1D8] dark:border-[#3A3A30] space-y-4">
               <h3 className="text-sm font-bold text-stone-800 dark:text-[#E5E1D8] flex items-center gap-2 pb-2 border-b border-stone-100 dark:border-stone-800">
-                <Activity className="w-4 h-4 text-[#5A5A40]" /> Panduan Alur Tashih & Kolaborasi Kitab
+                <Activity className="w-4 h-4 text-[#5A5A40]" /> Panduan Alur Kolaborasi Khazanah Digital
               </h3>
               
               <div className="space-y-4 text-xs text-stone-600 dark:text-stone-300">
                 <div className="relative pl-6 pb-2 border-l border-stone-200 dark:border-stone-800">
                   <div className="absolute -left-[5px] top-1 w-2.5 h-2.5 rounded-full bg-blue-500" />
-                  <strong className="text-stone-800 dark:text-white">1. Pilih Kitab & Buat Draft Rancangan</strong>
-                  <p className="mt-1">Pilih kitab yang ingin Anda sunting pada tab 'Majelis Kitab'. Buat Draft kerja pribadi Anda untuk mulai menulis secara aman tanpa memengaruhi naskah induk utama.</p>
+                  <strong className="text-stone-800 dark:text-white">1. Pilih Karya & Buat Musawwadah (Rancangan)</strong>
+                  <p className="mt-1">Pilih karya tulis yang ingin Anda sunting pada tab 'Majelis Karya'. Buat Musawwadah kerja pribadi Anda untuk mulai menulis secara aman tanpa memengaruhi naskah induk utama.</p>
                 </div>
                 
                 <div className="relative pl-6 pb-2 border-l border-stone-200 dark:border-stone-800">
@@ -1543,14 +1677,14 @@ export default function CollaborativeEditor() {
 
                 <div className="relative pl-6 pb-2 border-l border-stone-200 dark:border-stone-800">
                   <div className="absolute -left-[5px] top-1 w-2.5 h-2.5 rounded-full bg-purple-500" />
-                  <strong className="text-stone-800 dark:text-white">3. Ajukan Usulan Tashih (Penggabungan)</strong>
-                  <p className="mt-1">Setelah selesai menulis atau menyempurnakan naskah, ajukan Usulan Tashih (Merge Request). Sistem kami akan melacak perbedaan kalimat (Muqabalah) kata demi kata secara otomatis.</p>
+                  <strong className="text-stone-800 dark:text-white">3. Ajukan Usulan Tashih (Penyatuan)</strong>
+                  <p className="mt-1">Setelah selesai menulis atau menyempurnakan naskah, ajukan Usulan Tashih (Penyatuan Teks). Sistem kami akan melacak perbedaan kalimat (Muqabalah) kata demi kata secara otomatis.</p>
                 </div>
 
                 <div className="relative pl-6">
                   <div className="absolute -left-[5px] top-1 w-2.5 h-2.5 rounded-full bg-emerald-500" />
                   <strong className="text-stone-800 dark:text-white">4. Pemeriksaan (Tashih) & Penggabungan Resmi</strong>
-                  <p className="mt-1">Para Mushahhih atau Mudir akan meneliti naskah Anda (Muqabalah / Perbandingan Teks), memberikan ulasan/catatan, menyetujui, dan akhirnya menggabungkan perubahan Anda ke naskah utama kitab.</p>
+                  <p className="mt-1">Para Mushahhih atau Mudir akan meneliti naskah Anda (Muqabalah / Perbandingan Teks), memberikan ulasan/catatan, menyetujui, dan akhirnya menggabungkan perubahan Anda ke naskah induk utama.</p>
                 </div>
               </div>
             </div>
@@ -1563,8 +1697,8 @@ export default function CollaborativeEditor() {
               <div className="space-y-3.5 text-xs">
                 <div className="bg-white dark:bg-[#181814] p-3 rounded-lg border border-stone-200 dark:border-stone-800 space-y-1">
                   <div className="font-bold text-stone-700 dark:text-stone-300">Statistik Khidmat Anda:</div>
-                  <div className="text-stone-500">Draft aktif: <strong>{stats.myDrafts} buah</strong></div>
-                  <div className="text-stone-500">Peran: <strong>Khadim Kitab (Aktif)</strong></div>
+                  <div className="text-stone-500">Musawwadah aktif: <strong>{stats.myDrafts} buah</strong></div>
+                  <div className="text-stone-500">Peran: <strong>Khadim Karya (Aktif)</strong></div>
                 </div>
 
                 <div className="bg-white dark:bg-[#181814] p-3 rounded-lg border border-stone-200 dark:border-stone-800 space-y-2">
@@ -1592,7 +1726,7 @@ export default function CollaborativeEditor() {
             <input
               id="collab-search-input"
               type="text"
-              placeholder="Cari naskah kitab kustom untuk dikembangkan..."
+              placeholder="Cari naskah karya kustom untuk dikembangkan..."
               value={collabSearch}
               onChange={(e) => setCollabSearch(e.target.value)}
               className="w-full bg-white dark:bg-[#181814] border border-[#E5E1D8] dark:border-[#3A3A30] rounded-xl px-4 py-2.5 pl-10 text-xs focus:ring-1 focus:ring-[#5A5A40] focus:outline-none text-[#333333] dark:text-[#E5E1D8]"
@@ -1603,8 +1737,8 @@ export default function CollaborativeEditor() {
           {filteredCustomKitabs.length === 0 ? (
             <div className="bg-white dark:bg-[#181814] border border-[#E5E1D8] dark:border-[#3A3A30] p-12 rounded-xl text-center text-xs space-y-2 text-stone-500">
               <BookOpen className="w-8 h-8 mx-auto text-stone-300" />
-              <p className="font-bold">Belum ada Kitab Kustom yang tersedia</p>
-              <p>Silakan buat naskah kitab kustom terlebih dahulu pada menu "Tulis Kitab" untuk memulai kolaborasi.</p>
+              <p className="font-bold">Belum ada Karya Tulis Kustom yang tersedia</p>
+              <p>Silakan buat naskah karya kustom terlebih dahulu pada menu "Tulis Karya" untuk memulai kolaborasi.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1636,10 +1770,10 @@ export default function CollaborativeEditor() {
                       <div className="text-[11px] text-stone-500">
                         {kitabDrafts.length > 0 ? (
                           <span className="text-amber-600 dark:text-amber-400 font-semibold">
-                            {kitabDrafts.length} Draft Aktif
+                            {kitabDrafts.length} Musawwadah Aktif
                           </span>
                         ) : (
-                          <span>Belum ada draft</span>
+                          <span>Belum ada musawwadah</span>
                         )}
                       </div>
 
@@ -1654,7 +1788,7 @@ export default function CollaborativeEditor() {
                             setEditorChapters(existingDraft.chapters);
                             setHistoryStack([JSON.parse(JSON.stringify(existingDraft.chapters))]);
                             setHistoryPointer(0);
-                            addToast('Memuat Draft', `Melanjutkan draft kerja: "${existingDraft.title}"`, 'success');
+                            addToast('Memuat Musawwadah', `Melanjutkan musawwadah kerja: "${existingDraft.title}"`, 'success');
                           } else {
                             setShowCreateDraftModal(true);
                           }
@@ -1662,7 +1796,7 @@ export default function CollaborativeEditor() {
                         className="bg-[#5A5A40] hover:bg-[#484833] text-white font-bold text-xs px-3.5 py-1.5 rounded-lg flex items-center gap-1 cursor-pointer transition-colors focus:outline-none"
                       >
                         <GitBranch className="w-3.5 h-3.5" />
-                        <span>Kolaborasi</span>
+                        <span>Mudzakarah</span>
                       </button>
                     </div>
                   </div>
@@ -1686,7 +1820,7 @@ export default function CollaborativeEditor() {
             <div className="bg-white dark:bg-[#181814] border border-[#E5E1D8] dark:border-[#3A3A30] p-12 rounded-xl text-center text-xs text-stone-500">
               <GitPullRequest className="w-8 h-8 mx-auto text-stone-300 mb-2" />
               <p className="font-bold">Tidak ada usulan tashih yang terbuka</p>
-              <p>Minta katib (kontributor) untuk membuat draf rancangan dan mengajukan usulan penggabungan.</p>
+              <p>Minta katib (penyusun) untuk membuat musawwadah dan mengajukan usulan tashih.</p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -1722,7 +1856,7 @@ export default function CollaborativeEditor() {
                       </h4>
                     </div>
                     <div className="text-[11px] text-stone-500 dark:text-stone-400">
-                      Diajukan oleh: <strong className="text-stone-700 dark:text-stone-200">{mr.authorName}</strong> • Kitab: <em>{mr.kitabTitle}</em>
+                      Diajukan oleh: <strong className="text-stone-700 dark:text-stone-200">{mr.authorName}</strong> • Karya: <em>{mr.kitabTitle}</em>
                     </div>
                     <p className="text-xs text-stone-600 dark:text-stone-300 line-clamp-1">
                       {mr.description}
@@ -1744,7 +1878,7 @@ export default function CollaborativeEditor() {
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-stone-800 dark:text-[#E5E1D8]">
-              Pilih Kitab Kolaborasi untuk Melihat Histori
+              Pilih Karya Tulis Kolaborasi untuk Melihat Histori
             </h3>
           </div>
 
@@ -1791,7 +1925,7 @@ export default function CollaborativeEditor() {
               </button>
               <div>
                 <h4 className="text-xs font-bold text-stone-800 dark:text-white uppercase tracking-wider flex items-center gap-1.5">
-                  <FileText className="w-4 h-4 text-[#5A5A40]" /> Editor Draft: {activeDraft.title}
+                  <FileText className="w-4 h-4 text-[#5A5A40]" /> Editor Musawwadah: {activeDraft.title}
                 </h4>
                 {/* Auto-save cloud sync indicator */}
                 <div className="text-[10px] font-medium flex items-center gap-1 mt-0.5">
@@ -1830,7 +1964,7 @@ export default function CollaborativeEditor() {
                   className="bg-[#5A5A40] hover:bg-[#484833] text-white font-bold text-xs px-3.5 py-2 rounded-lg flex items-center gap-1.5 focus:outline-none cursor-pointer transition-colors"
                 >
                   <GitPullRequest className="w-3.5 h-3.5" />
-                  <span>Ajukan Merge</span>
+                  <span>Ajukan Tashih</span>
                 </button>
               )}
 
@@ -1850,7 +1984,7 @@ export default function CollaborativeEditor() {
               <div className="bg-[#F9F6F0] dark:bg-[#181814] border border-[#E5E1D8] dark:border-[#3A3A30] p-5 rounded-xl shadow-xs space-y-4">
                 <div className="border-b border-stone-100 dark:border-stone-800 pb-2 flex items-center justify-between">
                   <h4 className="font-serif font-bold text-stone-800 dark:text-white text-sm">
-                    Detail Kitab Induk
+                    Detail Naskah Induk
                   </h4>
                   {(selectedKitab.createdBy === currentUserEmail || myRole === 'admin') && (
                     <button
@@ -1872,7 +2006,7 @@ export default function CollaborativeEditor() {
                   <div className="space-y-3.5 text-xs">
                     {/* Title */}
                     <div>
-                      <label htmlFor="meta-title-input" className="block text-[10px] font-bold text-stone-400 dark:text-stone-500 uppercase tracking-wider mb-1">Judul Kitab *</label>
+                      <label htmlFor="meta-title-input" className="block text-[10px] font-bold text-stone-400 dark:text-stone-500 uppercase tracking-wider mb-1">Judul Karya *</label>
                       <input
                         id="meta-title-input"
                         type="text"
@@ -1949,7 +2083,7 @@ export default function CollaborativeEditor() {
                 ) : (
                   <div className="space-y-3.5 text-xs text-stone-600 dark:text-stone-300">
                     <div>
-                      <label className="block text-[10px] font-bold text-stone-400 dark:text-stone-500 uppercase tracking-wider mb-1">Judul Kitab</label>
+                      <label className="block text-[10px] font-bold text-stone-400 dark:text-stone-500 uppercase tracking-wider mb-1">Judul Karya</label>
                       <p className="font-serif font-bold text-stone-800 dark:text-stone-100 text-sm bg-white dark:bg-stone-900/40 px-3 py-2 border border-stone-200 dark:border-stone-800 rounded-lg">
                         {selectedKitab.title}
                       </p>
@@ -1967,7 +2101,7 @@ export default function CollaborativeEditor() {
                       </p>
                     </div>
                     <div>
-                      <label className="block text-[10px] font-bold text-stone-400 dark:text-stone-500 uppercase tracking-wider mb-1">Inisiator Draft</label>
+                      <label className="block text-[10px] font-bold text-stone-400 dark:text-stone-500 uppercase tracking-wider mb-1">Penyusun Musawwadah</label>
                       <p className="bg-white dark:bg-stone-900/40 px-3 py-2 border border-stone-200 dark:border-stone-800 rounded-lg">
                         {activeDraft.authorName} ({activeDraft.authorEmail})
                       </p>
@@ -1984,7 +2118,7 @@ export default function CollaborativeEditor() {
                       <Shield className="w-4 h-4 text-[#5A5A40]" /> Kelola Kolaborator
                     </h4>
                     <p className="text-[10px] text-stone-400 mt-0.5">
-                      Hanya pemilik kitab yang dapat mengatur hak akses.
+                      Hanya pemilik karya tulis yang dapat mengatur hak akses.
                     </p>
                   </div>
 
@@ -2204,7 +2338,7 @@ export default function CollaborativeEditor() {
               <div className="bg-[#F9F6F0] dark:bg-[#181814] border border-[#E5E1D8] dark:border-[#3A3A30] rounded-xl p-4 shadow-none space-y-3">
                 <div className="flex items-center justify-between">
                   <h4 className="font-serif font-bold text-[#5A5A40] dark:text-[#E5E1D8] text-xs flex items-center gap-1.5">
-                    <BookOpen className="w-4 h-4 text-[#5A5A40] dark:text-[#E5E1D8]" /> 1. Silsilah / Struktur Bab Kitab
+                    <BookOpen className="w-4 h-4 text-[#5A5A40] dark:text-[#E5E1D8]" /> 1. Silsilah / Struktur Bab Karya
                   </h4>
                   {myRole !== 'reader' && (
                     <div className="flex items-center gap-3">
@@ -2337,7 +2471,7 @@ export default function CollaborativeEditor() {
                                 </div>
                               ) : (
                                 <select
-                                  value={ch.nodeType || (ch.parentId ? 'Fasal' : 'Bab')}
+                                  value={ch.nodeType}
                                   onChange={(e) => {
                                     const val = e.target.value;
                                     if (val === '__CUSTOM__') {
@@ -2355,7 +2489,7 @@ export default function CollaborativeEditor() {
                               )
                             ) : (
                               <span className="text-[10px] font-mono text-[#5A5A40] dark:text-[#E5E1D8] bg-[#F4F1EA] dark:bg-stone-800 px-1 py-0.5 rounded">
-                                {ch.nodeType || (ch.parentId ? 'Fasal' : 'Bab')}
+                                {ch.nodeType}
                               </span>
                             )}
 
@@ -2487,11 +2621,11 @@ export default function CollaborativeEditor() {
                 </div>
               </div>
 
-              {/* 2. Daftar Halaman di Bab Ini */}
+              {/* 2. Daftar Halaman di Node Ini */}
               <div className="bg-[#F9F6F0] dark:bg-[#181814] border border-[#E5E1D8] dark:border-[#3A3A30] rounded-xl p-4 shadow-none space-y-3">
                 <div className="flex items-center justify-between">
                   <h4 className="font-serif font-bold text-[#5A5A40] dark:text-[#E5E1D8] text-xs flex items-center gap-1.5">
-                    <FileText className="w-4 h-4 text-[#5A5A40] dark:text-[#E5E1D8]" /> 2. Daftar Halaman di Bab Ini
+                    <FileText className="w-4 h-4 text-[#5A5A40] dark:text-[#E5E1D8]" /> 2. Daftar Halaman di Node Ini
                   </h4>
                   {myRole !== 'reader' && (
                     <button
@@ -2549,7 +2683,7 @@ export default function CollaborativeEditor() {
                 <div className="border-b border-[#E5E1D8] dark:border-[#3A3A30] pb-4 grid grid-cols-1 sm:grid-cols-4 gap-4 items-end">
                   <div className="sm:col-span-1">
                     <label htmlFor="chapter-number-input" className="block text-xs font-bold text-[#5A5A40] dark:text-[#E5E1D8] mb-1.5">
-                      Nomor Bab *
+                      Nomor Node saat ini *
                     </label>
                     <input
                       id="chapter-number-input"
@@ -2603,7 +2737,7 @@ export default function CollaborativeEditor() {
                 <div className="flex flex-col sm:flex-row gap-4 items-end bg-[#F4F1EA]/50 dark:bg-[#1C1C18]/35 p-3.5 rounded-lg border border-[#E5E1D8] dark:border-[#3A3A30]">
                   <div className="w-full sm:w-36">
                     <label htmlFor="page-number-input" className="block text-xs font-bold text-[#5A5A40] dark:text-[#E5E1D8] mb-1.5">
-                      No. Halaman Aktif
+                      Nomor Halaman saat ini *
                     </label>
                     <input
                       id="page-number-input"
@@ -2907,9 +3041,9 @@ export default function CollaborativeEditor() {
               <div className="p-4 bg-[#F9F6F0] dark:bg-[#121210] rounded-xl border border-stone-200 dark:border-stone-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div className="space-y-1">
                   <h4 className="text-xs font-bold text-stone-800 dark:text-white flex items-center gap-1.5">
-                    <UserCheck className="w-4 h-4 text-[#5A5A40]" /> Evaluasi Reviewer
+                    <UserCheck className="w-4 h-4 text-[#5A5A40]" /> Tinjauan Mushahhih
                   </h4>
-                  <p className="text-[11px] text-stone-500">Gunakan tombol di kanan untuk menyetujui, menolak, atau meminta revisi perbaikan pada draft ini.</p>
+                  <p className="text-[11px] text-stone-500">Gunakan tombol di kanan untuk menyetujui, menolak, atau meminta revisi perbaikan pada musawwadah ini.</p>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-start md:justify-end">
@@ -2927,14 +3061,14 @@ export default function CollaborativeEditor() {
                         onClick={() => triggerReviewAction('reject')}
                         className="w-full sm:w-auto justify-center flex items-center bg-red-600 hover:bg-red-700 text-white font-bold text-xs px-3.5 py-1.5 rounded-lg focus:outline-none cursor-pointer"
                       >
-                        Tolak Draft
+                        Tolak Musawwadah
                       </button>
                       <button
                         id="btn-mr-approve"
                         onClick={() => triggerReviewAction('approve')}
                         className="w-full sm:w-auto justify-center flex items-center bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-3.5 py-1.5 rounded-lg focus:outline-none cursor-pointer"
                       >
-                        Setujui (Approve)
+                        Sahkan & Setujui
                       </button>
                     </>
                   )}
@@ -2947,7 +3081,7 @@ export default function CollaborativeEditor() {
                       className="w-full sm:w-auto justify-center bg-[#5A5A40] hover:bg-[#484833] text-white font-bold text-xs px-4 py-1.5 rounded-lg shadow-sm focus:outline-none cursor-pointer flex items-center gap-1.5"
                     >
                       <GitMerge className="w-4 h-4" />
-                      <span>Gabungkan ke Main Branch</span>
+                      <span>Satukan ke Naskah Utama</span>
                     </button>
                   )}
                 </div>
@@ -2957,7 +3091,7 @@ export default function CollaborativeEditor() {
             {/* DEVIATIONS (DIFF VIEWER) */}
             <div className="space-y-4">
               <h4 className="text-xs font-bold text-stone-800 dark:text-white uppercase tracking-wider">
-                🔬 Perbandingan Teks (Diff Viewer) — {activeMR.diffs.length} Perubahan
+                🔬 Muqabalah Naskah (Perbandingan Teks) — {activeMR.diffs.length} Perubahan
               </h4>
 
               <div className="space-y-4 max-h-[450px] overflow-y-auto">
@@ -2989,14 +3123,24 @@ export default function CollaborativeEditor() {
                         <div className="space-y-2 p-3 bg-red-50/40 dark:bg-red-950/20 rounded-lg border border-red-100 dark:border-red-900/60 text-right">
                           <span className="text-[9px] font-bold text-red-600 block text-left">Naskah Asli (Lama):</span>
                           {diff.oldArabic && (
-                            <p className="font-serif text-lg leading-relaxed text-red-800 dark:text-red-300" dir="rtl">
-                              {diff.oldArabic}
-                            </p>
+                            <div className="text-red-800 dark:text-red-300">
+                              <HighlightedDiffText 
+                                oldText={diff.oldArabic} 
+                                newText={diff.newArabic || ''} 
+                                mode="old" 
+                                isArabic={true} 
+                              />
+                            </div>
                           )}
                           {diff.oldTranslation && (
-                            <p className="text-xs text-stone-500 dark:text-stone-400 text-left italic pt-2 border-t border-red-100 dark:border-red-900/30">
-                              {diff.oldTranslation}
-                            </p>
+                            <div className="text-stone-500 dark:text-stone-400 text-left pt-2 border-t border-red-100 dark:border-red-900/30">
+                              <HighlightedDiffText 
+                                oldText={diff.oldTranslation} 
+                                newText={diff.newTranslation || ''} 
+                                mode="old" 
+                                isArabic={false} 
+                              />
+                            </div>
                           )}
                         </div>
                       )}
@@ -3006,14 +3150,24 @@ export default function CollaborativeEditor() {
                         <div className="space-y-2 p-3 bg-emerald-50/40 dark:bg-emerald-950/20 rounded-lg border border-emerald-100 dark:border-emerald-900/60 text-right">
                           <span className="text-[9px] font-bold text-emerald-600 block text-left">Usulan Perubahan (Baru):</span>
                           {diff.newArabic && (
-                            <p className="font-serif text-lg leading-relaxed text-emerald-800 dark:text-emerald-300" dir="rtl">
-                              {diff.newArabic}
-                            </p>
+                            <div className="text-emerald-800 dark:text-emerald-300">
+                              <HighlightedDiffText 
+                                oldText={diff.oldArabic || ''} 
+                                newText={diff.newArabic} 
+                                mode="new" 
+                                isArabic={true} 
+                              />
+                            </div>
                           )}
                           {diff.newTranslation && (
-                            <p className="text-xs text-stone-500 dark:text-stone-400 text-left italic pt-2 border-t border-emerald-100 dark:border-emerald-900/30">
-                              {diff.newTranslation}
-                            </p>
+                            <div className="text-stone-500 dark:text-stone-400 text-left pt-2 border-t border-emerald-100 dark:border-emerald-900/30">
+                              <HighlightedDiffText 
+                                oldText={diff.oldTranslation || ''} 
+                                newText={diff.newTranslation} 
+                                mode="new" 
+                                isArabic={false} 
+                              />
+                            </div>
                           )}
                         </div>
                       )}
@@ -3022,7 +3176,7 @@ export default function CollaborativeEditor() {
                 ))}
 
                 {activeMR.diffs.length === 0 && (
-                  <p className="text-xs text-stone-400 italic text-center py-6">Tidak ada perbedaan isi terdeteksi antara draft dan kitab utama.</p>
+                  <p className="text-xs text-stone-400 italic text-center py-6">Tidak ada perbedaan isi terdeteksi antara draft dan karya utama.</p>
                 )}
               </div>
             </div>
@@ -3134,7 +3288,7 @@ export default function CollaborativeEditor() {
               }}
               className="text-xs text-[#5A5A40] font-bold flex items-center gap-1 focus:outline-none"
             >
-              <ArrowLeft className="w-3.5 h-3.5" /> Pilih Kitab Lain
+              <ArrowLeft className="w-3.5 h-3.5" /> Pilih Karya Lain
             </button>
           </div>
 
@@ -3142,7 +3296,7 @@ export default function CollaborativeEditor() {
             <div className="bg-white dark:bg-[#181814] border border-[#E5E1D8] dark:border-[#3A3A30] p-12 rounded-xl text-center text-xs text-stone-500">
               <History className="w-8 h-8 mx-auto text-stone-300 mb-2" />
               <p className="font-bold">Belum ada riwayat penggabungan (Tashih)</p>
-              <p>Riwayat perubahan akan dicatat setelah Anda berhasil menyetujui dan menggabungkan sebuah Usulan Tashih.</p>
+              <p>Riwayat perubahan akan dicatat setelah Anda berhasil menyetujui dan menyatukan sebuah Usulan Tashih.</p>
             </div>
           ) : (
             <div className="relative border-l border-stone-200 dark:border-stone-800 pl-6 ml-3 space-y-6 py-2">
@@ -3169,7 +3323,7 @@ export default function CollaborativeEditor() {
                         id={`btn-rollback-${history.id}`}
                         onClick={() => handleRollback(history)}
                         className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-[10px] px-3 py-1 rounded-md transition-colors focus:outline-none cursor-pointer"
-                        title="Kembalikan kitab utama ke versi sebelum merge ini"
+                        title="Kembalikan karya utama ke versi sebelum merge ini"
                       >
                         Restore Versi Ini
                       </button>
@@ -3200,15 +3354,15 @@ export default function CollaborativeEditor() {
               className="bg-white dark:bg-[#181814] border border-[#E5E1D8] dark:border-[#3A3A30] p-6 rounded-xl max-w-md w-full shadow-lg relative z-10 space-y-4"
             >
               <h3 className="font-serif font-bold text-stone-800 dark:text-white text-base">
-                Inisialisasi Draft Kolaborasi
+                Inisialisasi Musawwadah (Naskah Kerja)
               </h3>
               <p className="text-xs text-stone-500 dark:text-stone-400 leading-relaxed">
-                Buat salinan draft aman (Branch) dari kitab **"{selectedKitab.title}"**. Anda dapat mengedit isi bab, menulis Arab harakat, dan menambahkan terjemahan secara offline/online tanpa merusak kitab utama.
+                Buat salinan musawwadah baru dari karya **"{selectedKitab.title}"**. Anda dapat mengedit teks, menerjemahkan, atau menambahkan penjelasan secara offline/online tanpa merusak karya utama.
               </p>
 
               <div className="space-y-1.5">
                 <label htmlFor="draft-title" className="block text-[10px] font-bold text-stone-400 uppercase">
-                  Nama Draft Kerja
+                  Nama Musawwadah Kerja
                 </label>
                 <input
                   id="draft-title"
@@ -3260,10 +3414,10 @@ export default function CollaborativeEditor() {
               className="bg-white dark:bg-[#181814] border border-[#E5E1D8] dark:border-[#3A3A30] p-6 rounded-xl max-w-md w-full shadow-lg relative z-10 space-y-4"
             >
               <h3 className="font-serif font-bold text-stone-800 dark:text-white text-base flex items-center gap-2">
-                <GitPullRequest className="w-5 h-5 text-emerald-600" /> Ajukan Penyatuan & Tashih (Merge)
+                <GitPullRequest className="w-5 h-5 text-emerald-600" /> Ajukan Penyatuan & Tashih
               </h3>
               <p className="text-xs text-stone-500 dark:text-stone-400 leading-relaxed">
-                Ajukan draf perbaikan Anda ke Mushahhih/Mudir untuk digabungkan ke naskah induk utama kitab kustom.
+                Ajukan musawwadah perbaikan Anda ke Mushahhih/Mudir untuk disatukan ke naskah induk utama karya kustom.
               </p>
 
               <div className="space-y-4">
@@ -3344,14 +3498,14 @@ export default function CollaborativeEditor() {
                   reviewActionType === 'reject' ? 'text-red-600' :
                   'text-amber-500'
                 }`} />
-                {reviewActionType === 'approve' && 'Setujui Draft Perubahan'}
+                {reviewActionType === 'approve' && 'Sahkan & Setujui Perubahan'}
                 {reviewActionType === 'reject' && 'Tolak Usulan Perubahan'}
                 {reviewActionType === 'changes' && 'Minta Revisi Perbaikan'}
               </h3>
               
               <p className="text-xs text-stone-500 dark:text-stone-400 leading-relaxed">
-                {reviewActionType === 'approve' && 'Anda akan menyetujui draft ini agar siap digabungkan (merge) ke naskah utama.'}
-                {reviewActionType === 'reject' && 'Anda akan menolak usulan draft ini secara permanen.'}
+                {reviewActionType === 'approve' && 'Anda akan mensahkan musawwadah ini agar siap disatukan ke naskah utama.'}
+                {reviewActionType === 'reject' && 'Anda akan menolak usulan naskah ini secara permanen.'}
                 {reviewActionType === 'changes' && 'Berikan catatan bagian mana saja yang perlu diperbaiki oleh kontributor.'}
               </p>
 

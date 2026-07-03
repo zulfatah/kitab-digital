@@ -42,8 +42,10 @@ interface AppContextType {
   setActiveChapterId: (id: string | null) => void;
   editingKitabId: string | null;
   setEditingKitabId: (id: string | null) => void;
-  view: 'library' | 'reader' | 'writer' | 'schedule' | 'collaboration';
-  setView: (v: 'library' | 'reader' | 'writer' | 'schedule' | 'collaboration') => void;
+  view: 'library' | 'reader' | 'writer' | 'schedule' | 'collaboration' | 'profile';
+  setView: (v: 'library' | 'reader' | 'writer' | 'schedule' | 'collaboration' | 'profile') => void;
+  profileUserEmail: string | null;
+  setProfileUserEmail: (email: string | null) => void;
   searchQuery: string;
   setSearchQuery: (q: string) => void;
   selectedCategory: string;
@@ -56,6 +58,8 @@ interface AppContextType {
   toasts: ToastMessage[];
   addToast: (title: string, description: string, type?: ToastMessage['type']) => void;
   removeToast: (id: string) => void;
+  showLoginPrompt: 'welcome' | 'write' | null;
+  setShowLoginPrompt: (val: 'welcome' | 'write' | null) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -77,7 +81,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [activeSchedule, setActiveSchedule] = useState<ReadingSchedule | null>(null);
 
   // Navigation
-  const [view, setView] = useState<'library' | 'reader' | 'writer' | 'schedule' | 'collaboration'>('library');
+  const [view, setView] = useState<'library' | 'reader' | 'writer' | 'schedule' | 'collaboration' | 'profile'>('library');
+  const [profileUserEmail, setProfileUserEmail] = useState<string | null>(null);
   const [activeKitabId, setActiveKitabIdState] = useState<string | null>(null);
   const [activeChapterId, setActiveChapterIdState] = useState<string | null>(null);
   const [editingKitabId, setEditingKitabId] = useState<string | null>(null);
@@ -89,6 +94,9 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   // Notifications
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+
+  // Login prompt state
+  const [showLoginPrompt, setShowLoginPrompt] = useState<'welcome' | 'write' | null>(null);
 
   // 1-to-1 Kitab mappings
   const allKitabs = useMemo(() => {
@@ -110,7 +118,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   }, [allKitabs, activeKitabId]);
 
   const activeChapter = useMemo(() => {
-    return activeKitab?.chapters.find(c => c.id === activeChapterId) || null;
+    return activeKitab?.chapters?.find(c => c.id === activeChapterId) || null;
   }, [activeKitab, activeChapterId]);
 
   const setActiveKitabId = (id: string | null) => {
@@ -119,7 +127,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       setActiveChapterIdState(null);
     } else {
       const kitab = allKitabs.find(k => k.id === id);
-      if (kitab && kitab.chapters.length > 0) {
+      if (kitab && kitab.chapters && kitab.chapters.length > 0) {
         setActiveChapterIdState(kitab.chapters[0].id);
       }
     }
@@ -162,7 +170,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         })
       });
 
-      if (!res.ok) throw new Error('Failed to register/get JWT on server');
+      if (!res.ok) { const text = await res.text(); throw new Error('Failed to register/get JWT on server: ' + res.status + ' ' + text); }
       const data = await res.json();
       localStorage.setItem('auth_token', data.token);
       return data;
@@ -187,7 +195,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         })
       });
 
-      if (!res.ok) throw new Error('Failed to register/get JWT on server');
+      if (!res.ok) { const text = await res.text(); throw new Error('Failed to register/get JWT on server: ' + res.status + ' ' + text); }
       const data = await res.json();
       localStorage.setItem('auth_token', data.token);
       return data;
@@ -524,6 +532,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         setEditingKitabId,
         view,
         setView,
+        profileUserEmail,
+        setProfileUserEmail,
         searchQuery,
         setSearchQuery,
         selectedCategory,
@@ -535,7 +545,9 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         logReadingActivity,
         toasts,
         addToast,
-        removeToast
+        removeToast,
+        showLoginPrompt,
+        setShowLoginPrompt
       }}
     >
       {children}

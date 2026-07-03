@@ -1,6 +1,6 @@
 {
-  "name": "Kitab Digital",
-  "description": "Aplikasi menulis dan membaca kitab digital dengan pencarian cepat, sinkronisasi cloud, mode malam, catatan personal, dan diskusi publik.",
+  "name": "Khazanah Digital",
+  "description": "Menghimpun Ilmu, Menyebarkan Manfaat. Platform membaca, menulis, dan mendiskusikan berbagai karya tulis mulai dari artikel, buku, hingga kitab klasik secara kolaboratif.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

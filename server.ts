@@ -5,7 +5,7 @@ import { createServer as createViteServer } from 'vite';
 import { initializeDatabase, dbService, getDatabaseStatus } from './server/db';
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_default_secret_jwt_key_987654';
 
 // Use express.json with limit to handle large custom kitab / drafts uploads
@@ -314,7 +314,7 @@ async function startServer() {
   app.post('/api/custom_kitabs', authenticateJWT, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const email = req.user!.email;
-      const { id, title, author, description, category, chapters, createdAt, isPublic, collaborators } = req.body;
+      const { id, title, author, description, category, chapters, createdAt, isPublic, collaborators, type, content } = req.body;
 
       // Ambil daftar kitab kustom dan cek jika id sudah ada, pastikan pembuatnya adalah email yang sama
       const existingKitabs = await dbService.getCustomKitabs(email);
@@ -333,7 +333,9 @@ async function startServer() {
         chapters: chapters || [],
         collaborators: collaborators || [],
         createdAt: createdAt || new Date().toISOString(),
-        isPublic: isPublic === true || isPublic === 1 || isPublic === 'true'
+        isPublic: isPublic === true || isPublic === 1 || isPublic === 'true',
+        type: type || 'kitab',
+        content: content || ''
       };
       await dbService.saveCustomKitab(kitab);
       res.json({ success: true, kitab });
@@ -360,6 +362,49 @@ async function startServer() {
       res.json({ success: true });
     } catch (e) {
       res.status(500).json({ error: 'Gagal menghapus kitab kustom' });
+    }
+  });
+
+  // User Profile Endpoint (Retrieve public user profile and list of public works)
+  app.get('/api/users/profile/:email', optionalAuthenticateJWT, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const email = req.params.email.trim().toLowerCase();
+      const user = await dbService.getUser(email);
+      
+      // Get all custom kitabs for the user
+      const allKitabs = await dbService.getCustomKitabs(email);
+      const requesterEmail = req.user?.email || "";
+      
+      const userKitabs = allKitabs.filter(k => {
+        const isOwner = k.createdBy === email;
+        const canSee = k.isPublic || (requesterEmail && requesterEmail === email);
+        return isOwner && canSee;
+      });
+
+      if (!user) {
+        if (userKitabs.length > 0) {
+          const authorName = userKitabs[0].author || 'Penulis Kitab';
+          return res.json({
+            profile: {
+              email,
+              displayName: authorName,
+              photoURL: '',
+              createdAt: userKitabs[0].createdAt || new Date().toISOString(),
+              lastLoginAt: userKitabs[0].createdAt || new Date().toISOString()
+            },
+            kitabs: userKitabs
+          });
+        }
+        return res.status(404).json({ error: 'Profil pengguna tidak ditemukan' });
+      }
+
+      res.json({
+        profile: user,
+        kitabs: userKitabs
+      });
+    } catch (e) {
+      console.error('Error fetching user profile:', e);
+      res.status(500).json({ error: 'Gagal mengambil profil pengguna' });
     }
   });
 

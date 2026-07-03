@@ -15,7 +15,7 @@ interface DiscussionPanelProps {
 }
 
 export default function DiscussionPanel({ kitabId, chapterId }: DiscussionPanelProps) {
-  const { currentUserEmail, currentUserName, addToast } = useApp();
+  const { currentUserEmail, currentUserName, addToast, setView, setProfileUserEmail } = useApp();
   const [comments, setComments] = useState<Comment[]>([]);
   const [inputText, setInputText] = useState('');
   const [guestName, setGuestName] = useState('');
@@ -44,7 +44,7 @@ export default function DiscussionPanel({ kitabId, chapterId }: DiscussionPanelP
     if (!inputText.trim()) return;
 
     const authorName = currentUserEmail ? currentUserName : guestName.trim() || 'Pembaca Anonim';
-    const authorEmail = currentUserEmail ? currentUserEmail : guestEmail.trim() || 'guest@kitabdigital.com';
+    const authorEmail = currentUserEmail ? currentUserEmail : guestEmail.trim() || 'guest@khazanahdigital.com';
 
     setIsSubmitting(true);
     try {
@@ -125,9 +125,22 @@ export default function DiscussionPanel({ kitabId, chapterId }: DiscussionPanelP
                   <div className="w-4 h-4 rounded-full bg-[#E5E1D8] dark:bg-[#3A3A30] flex items-center justify-center text-[8px] font-bold text-[#777266]">
                     {comm.authorName.charAt(0).toUpperCase()}
                   </div>
-                  <strong className="text-[#777266] dark:text-[#A8A890] font-bold truncate max-w-[100px]">
-                    {comm.authorName}
-                  </strong>
+                  {comm.authorEmail ? (
+                    <strong 
+                      onClick={() => {
+                        setProfileUserEmail(comm.authorEmail);
+                        setView('profile');
+                      }}
+                      className="text-[#777266] dark:text-[#A8A890] font-bold truncate max-w-[100px] hover:underline cursor-pointer hover:text-[#5A5A40] dark:hover:text-amber-400 transition-colors"
+                      title="Lihat Profil Pengguna"
+                    >
+                      {comm.authorName}
+                    </strong>
+                  ) : (
+                    <strong className="text-[#777266] dark:text-[#A8A890] font-bold truncate max-w-[100px]">
+                      {comm.authorName}
+                    </strong>
+                  )}
                   <span className="text-[8px] opacity-75">• {formatDate(comm.createdAt)}</span>
                 </div>
 

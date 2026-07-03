@@ -96,6 +96,7 @@ export default function KitabReader() {
     logReadingActivity,
     setView,
     setEditingKitabId,
+    setProfileUserEmail,
     currentUserEmail
   } = useApp();
 
@@ -116,6 +117,9 @@ export default function KitabReader() {
 
   // Search state inside active kitab
   const [searchQuery, setSearchQuery] = useState('');
+
+  const typeLabel = activeKitab?.type === 'artikel' ? 'Artikel' : activeKitab?.type === 'buku' ? 'Buku' : 'Kitab';
+  const indexLabel = activeKitab?.type === 'artikel' ? 'Detail' : 'Daftar Isi';
 
   // Strip Arabic diacritics helper
   const stripArabicDiacritics = (text: string): string => {
@@ -322,6 +326,16 @@ export default function KitabReader() {
     localStorage.setItem('kitab_reader_hide_translation', String(val));
   };
 
+  const [combineSections, setCombineSections] = useState<boolean>(() => {
+    const saved = localStorage.getItem('kitab_reader_combine_sections');
+    return saved === 'true';
+  });
+
+  const handleSetCombineSections = (val: boolean) => {
+    setCombineSections(val);
+    localStorage.setItem('kitab_reader_combine_sections', String(val));
+  };
+
   const [collapsedChapters, setCollapsedChapters] = useState<Record<string, boolean>>({});
 
   const isTreeStyle = useMemo(() => {
@@ -362,6 +376,17 @@ export default function KitabReader() {
   const activeGroupChapters = useMemo(() => {
     if (!activeKitab || !activeChapter) return [];
     if (isTreeStyle) {
+      if (combineSections) {
+        // Find the parent chapter if activeChapter is a sub-chapter, otherwise activeChapter itself is the parent
+        const parentCh = activeChapter.parentId
+          ? (activeKitab.chapters.find(c => c.id === activeChapter.parentId) || activeChapter)
+          : activeChapter;
+        
+        // Find all child chapters belonging to this parent
+        const children = activeKitab.chapters.filter(c => c.parentId === parentCh.id);
+        
+        return [parentCh, ...children];
+      }
       return [activeChapter];
     }
     if (!activeGroup) return [];
@@ -369,7 +394,7 @@ export default function KitabReader() {
     if (activeGroup.parent) chapters.push(activeGroup.parent);
     chapters.push(...activeGroup.children);
     return chapters;
-  }, [activeGroup, isTreeStyle, activeChapter, activeKitab]);
+  }, [activeGroup, isTreeStyle, activeChapter, activeKitab, combineSections]);
 
   // Compute pages for the active chapter
   const uniquePages = useMemo(() => {
@@ -399,12 +424,20 @@ export default function KitabReader() {
     return allParagraphs.filter(item => (item.paragraph.page || 1) === activePageNum);
   }, [activeGroupChapters, isPageMode, currentPageIndex, uniquePages]);
 
-  // Scroll to top when active chapter changes
+  // Scroll to active chapter or chapter header when it changes
   useEffect(() => {
     if (activeChapter?.id) {
+      if (combineSections && isTreeStyle) {
+        // Find if there is a header for the active chapter
+        const el = document.getElementById(`chapter-header-${activeChapter.id}`);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          return;
+        }
+      }
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
-  }, [activeChapter?.id]);
+  }, [activeChapter?.id, combineSections, isTreeStyle]);
 
   // Adjust page index when page list size changes
   useEffect(() => {
@@ -453,12 +486,25 @@ export default function KitabReader() {
 
   // Handle bookmarked status
   const isBookmarked = useMemo(() => {
-    if (!activeKitab || !activeChapter) return false;
+    if (!activeKitab) return false;
+    if (activeKitab.type === 'artikel') {
+      return bookmarks.some(b => b.kitabId === activeKitab.id && !b.chapterId);
+    }
+    if (!activeChapter) return false;
     return bookmarks.some(b => b.kitabId === activeKitab.id && b.chapterId === activeChapter.id);
   }, [bookmarks, activeKitab, activeChapter]);
 
   const toggleBookmark = async () => {
-    if (!activeKitab || !activeChapter) return;
+    if (!activeKitab) return;
+    if (activeKitab.type === 'artikel') {
+      if (isBookmarked) {
+        await removeBookmark(activeKitab.id, '');
+      } else {
+        await addBookmark(activeKitab.id, '');
+      }
+      return;
+    }
+    if (!activeChapter) return;
     if (isBookmarked) {
       await removeBookmark(activeKitab.id, activeChapter.id);
     } else {
@@ -466,13 +512,13 @@ export default function KitabReader() {
     }
   };
 
-  if (!activeKitab || !activeChapter) {
+  if (!activeKitab || (!activeChapter && activeKitab.type !== 'artikel')) {
     return (
-      <div className="text-center py-16 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl">
-        <p className="text-slate-500">Pilih kitab untuk mulai membaca.</p>
+      <div className="text-center py-16 bg-[#FDFBF7] dark:bg-stone-950 border border-[#E5E1D8] dark:border-[#3A3A30] rounded-2xl">
+        <p className="text-stone-500 font-serif">Pilih kitab atau artikel untuk mulai membaca.</p>
         <button
           onClick={() => setView('library')}
-          className="mt-4 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm"
+          className="mt-4 px-4 py-2 bg-[#5A5A40] text-white rounded-lg text-sm font-bold cursor-pointer hover:bg-[#454530]"
         >
           Kembali ke Pustaka
         </button>
@@ -481,7 +527,7 @@ export default function KitabReader() {
   }
 
   // Chapter navigation indices
-  const currentChapterIdx = activeKitab ? activeKitab.chapters.findIndex(ch => ch.id === activeChapter.id) : -1;
+  const currentChapterIdx = (activeKitab && activeChapter) ? activeKitab.chapters.findIndex(ch => ch.id === activeChapter.id) : -1;
   const currentGroupIndex = chapterGroups.findIndex(g => g === activeGroup);
 
   const hasPrevChapter = isTreeStyle ? (currentChapterIdx > 0) : (currentGroupIndex > 0);
@@ -553,8 +599,8 @@ export default function KitabReader() {
     setActiveParagraphChapterId(null);
   };
 
-  const handleDeleteAnnotation = async (pId: string) => {
-    await deleteAnnotation('', pId);
+  const handleDeleteAnnotation = async (annotationId: string, pId: string) => {
+    await deleteAnnotation(annotationId, pId);
     setActiveParagraphId(null);
   };
 
@@ -669,7 +715,7 @@ export default function KitabReader() {
               {activeKitab.title}
             </h2>
             <p className="text-[10px] sm:text-[11px] text-[#999488] font-medium truncate mt-0.5 uppercase tracking-wider">
-              {activeChapter.title}
+              {activeKitab.type === 'artikel' ? 'Artikel' : (activeChapter?.title || '')}
             </p>
           </div>
         </div>
@@ -731,8 +777,8 @@ export default function KitabReader() {
       {/* 2. Responsive Tabs for Mobile Reader View (Hidden on Desktop) */}
       <div id="mobile-reader-tabs" className="lg:hidden flex border border-[#E5E1D8] dark:border-[#3A3A30] bg-[#F9F6F0] dark:bg-[#181814] p-1 rounded-lg gap-1">
         {[
-          { id: 'text', label: 'Teks Kitab', icon: BookOpen },
-          { id: 'index', label: 'Daftar Isi', icon: BookmarkCheck },
+          { id: 'text', label: `Teks ${typeLabel}`, icon: BookOpen },
+          { id: 'index', label: indexLabel, icon: BookmarkCheck },
           { id: 'discussion', label: 'Diskusi', icon: MessageSquare }
         ].map((tab) => {
           const Icon = tab.icon;
@@ -1015,6 +1061,34 @@ export default function KitabReader() {
                     ))}
                   </div>
                 </div>
+
+                {/* 7. Combine Sections Toggle */}
+                {isTreeStyle && (
+                  <div>
+                    <span className="text-[11px] font-bold text-[#999488] uppercase tracking-wider block mb-2">
+                      Penggabungan Bab & Fasal
+                    </span>
+                    <div className="grid grid-cols-2 gap-2">
+                      {[
+                        { label: 'Gabungkan Struktur', value: true },
+                        { label: 'Pisahkan Bab & Fasal', value: false }
+                      ].map(opt => (
+                        <button
+                          key={opt.label}
+                          id={`combine-sections-btn-${opt.value}`}
+                          onClick={() => handleSetCombineSections(opt.value)}
+                          className={`text-xs py-2 rounded-lg border text-center cursor-pointer transition-all ${
+                            combineSections === opt.value
+                              ? 'bg-[#5A5A40] border-[#5A5A40] text-white font-semibold'
+                              : 'bg-[#FDFBF7] dark:bg-[#121210] border-[#E5E1D8] dark:border-[#3A3A30] text-[#333333] dark:text-[#E5E1D8]'
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </motion.div>
           )}
@@ -1025,6 +1099,52 @@ export default function KitabReader() {
           id="scripture-reader-canvas"
           className={`rounded-xl p-4 sm:p-8 shadow-none border transition-colors duration-200 ${themeStyles.canvas}`}
         >
+          {activeKitab.type === 'artikel' ? (
+            /* Elegant layout for full article */
+            <div className="space-y-6">
+              {/* Kitab Stamp Info for Article */}
+              <div className={`text-center mb-6 border-b border-dashed pb-5 ${themeStyles.stampBorder}`}>
+                <span className={`text-[10px] uppercase tracking-widest font-bold ${themeStyles.stampLabel}`}>
+                  {activeKitab.category}
+                </span>
+                <h1 className="font-serif text-lg sm:text-2xl font-bold mt-1">
+                  {activeKitab.title}
+                </h1>
+                <div className="flex flex-wrap items-center justify-center gap-x-2 text-[11px] mt-1.5 text-stone-500 dark:text-stone-400">
+                  <p>
+                    Ditulis oleh: <strong className={themeStyles.stampAuthor}>{activeKitab.author}</strong>
+                  </p>
+                  {activeKitab.createdBy && (
+                    <>
+                      <span className="text-stone-300 dark:text-[#3A3A30] select-none">•</span>
+                      <p>
+                        Kontributor:{' '}
+                        <span 
+                          onClick={() => {
+                            setProfileUserEmail(activeKitab.createdBy!);
+                            setView('profile');
+                          }}
+                          className="font-bold underline cursor-pointer hover:text-stone-900 dark:hover:text-amber-400 transition-colors"
+                          title="Lihat Profil Akun Kontributor"
+                        >
+                          {activeKitab.createdBy.split('@')[0]}
+                        </span>
+                      </p>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Full Article Content */}
+              <div 
+                className={`leading-relaxed whitespace-pre-wrap break-words prose dark:prose-invert max-w-none text-justify`}
+                style={{ fontSize: `${preferences.translationFontSize}px` }}
+                dangerouslySetInnerHTML={{ __html: activeKitab.content || '' }}
+              />
+            </div>
+          ) : (
+            <>
+
           {/* Kitab Stamp Info */}
           <div className={`text-center mb-6 border-b border-dashed pb-5 ${themeStyles.stampBorder}`}>
             <span className={`text-[10px] uppercase tracking-widest font-bold ${themeStyles.stampLabel}`}>
@@ -1033,9 +1153,29 @@ export default function KitabReader() {
             <h1 className="font-serif text-lg sm:text-2xl font-bold mt-1">
               {activeChapter.title}
             </h1>
-            <p className="text-[11px] mt-0.5">
-              Ditulis oleh: <strong className={themeStyles.stampAuthor}>{activeKitab.author}</strong>
-            </p>
+            <div className="flex flex-wrap items-center justify-center gap-x-2 text-[11px] mt-1.5 text-stone-500 dark:text-stone-400">
+              <p>
+                Ditulis oleh: <strong className={themeStyles.stampAuthor}>{activeKitab.author}</strong>
+              </p>
+              {activeKitab.createdBy && (
+                <>
+                  <span className="text-stone-300 dark:text-[#3A3A30] select-none">•</span>
+                  <p>
+                    Kontributor:{' '}
+                    <span 
+                      onClick={() => {
+                        setProfileUserEmail(activeKitab.createdBy!);
+                        setView('profile');
+                      }}
+                      className="font-bold underline cursor-pointer hover:text-stone-900 dark:hover:text-amber-400 transition-colors"
+                      title="Lihat Profil Akun Kontributor"
+                    >
+                      {activeKitab.createdBy.split('@')[0]}
+                    </span>
+                  </p>
+                </>
+              )}
+            </div>
           </div>
 
           {/* Page-by-Page Reading Navigation (Halaman demi Halaman) */}
@@ -1094,12 +1234,14 @@ export default function KitabReader() {
               const showLastPageDividerBelow = !isPageMode && (mapIndex === paragraphsOnCurrentPage.length - 1);
               
               const prevItem = mapIndex > 0 ? paragraphsOnCurrentPage[mapIndex - 1] : null;
-              const showChapterTitle = chapter.isSubChapter && (!prevItem || prevItem.chapter.id !== chapter.id);
+              const showChapterTitle = combineSections
+                ? (!prevItem ? chapter.id !== activeChapter.id : prevItem.chapter.id !== chapter.id)
+                : (chapter.isSubChapter && (!prevItem || prevItem.chapter.id !== chapter.id));
 
               return (
                 <React.Fragment key={p.id}>
                   {showChapterTitle && (
-                    <div className="mt-8 mb-4">
+                    <div id={`chapter-header-${chapter.id}`} className="mt-8 mb-4">
                       <h3 className="font-serif text-lg font-bold text-center text-[#5A5A40] dark:text-[#E5E1D8]">
                         {chapter.title}
                       </h3>
@@ -1239,7 +1381,7 @@ export default function KitabReader() {
                           {annotation ? (
                             <button
                               id={`btn-delete-annotation-${p.id}`}
-                              onClick={() => handleDeleteAnnotation(p.id)}
+                              onClick={() => handleDeleteAnnotation(annotation.id, p.id)}
                               className="flex items-center gap-1 text-[11px] font-semibold text-red-600 hover:text-red-700 focus:outline-none cursor-pointer"
                             >
                               <Trash2 className="w-3.5 h-3.5" /> Hapus Sorotan
@@ -1286,7 +1428,7 @@ export default function KitabReader() {
                       
                       {/* Center Page Number */}
                       <div className="px-6 font-serif text-[15px] font-bold text-[#5A5A40] dark:text-[#E5E1D8] bg-transparent">
-                        {currentPageNum}
+                        {p.pageLabel || currentPageNum}
                       </div>
                       
                       {/* Right Line */}
@@ -1306,9 +1448,12 @@ export default function KitabReader() {
             );
           })}
           </div>
+            </>
+          )}
         </div>
 
         {/* Chapters Footer Navigation bar */}
+        {activeKitab.type !== 'artikel' && (
         <div className="bg-[#F9F6F0] dark:bg-[#181814] border border-[#E5E1D8] dark:border-[#3A3A30] rounded-xl p-3 sm:p-4 shadow-none flex items-center justify-between gap-1.5 sm:gap-4">
           <button
             id="btn-nav-prev-chapter"
@@ -1334,15 +1479,82 @@ export default function KitabReader() {
             <span className="hidden sm:inline">Bab </span>Selanjutnya <ChevronRight className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
           </button>
         </div>
+        )}
       </div>
 
       {/* RIGHT COLUMN: Chapter Directory & Discussion Comments Panel (Always shown on desktop, conditionally on mobile) */}
       <div className={`space-y-6 lg:block ${activeTab !== 'text' ? 'block' : 'hidden lg:block'}`}>
         {/* Chapter Directory Panel & Search */}
         <div className={`bg-[#F9F6F0] dark:bg-[#181814] border border-[#E5E1D8] dark:border-[#3A3A30] rounded-xl p-4.5 shadow-none ${activeTab === 'index' ? 'block' : 'hidden lg:block'}`}>
+          {activeKitab.type === 'artikel' ? (
+            /* Elegant Metadata Card for Articles */
+            <div className="space-y-4">
+              <h3 className="font-serif font-bold text-[#5A5A40] dark:text-[#E5E1D8] text-sm mb-3 flex items-center justify-between pb-2 border-b border-[#E5E1D8] dark:border-[#3A3A30]">
+                <span className="flex items-center gap-2">
+                  <BookOpen className="w-4 h-4 text-[#5A5A40]" /> Detail Artikel
+                </span>
+              </h3>
+
+              <div className="space-y-3 text-xs">
+                <div>
+                  <span className="text-[10px] font-bold text-[#999488] uppercase tracking-wider block mb-0.5">
+                    Judul
+                  </span>
+                  <p className="font-serif font-bold text-sm text-neutral-800 dark:text-[#E5E1D8]">
+                    {activeKitab.title}
+                  </p>
+                </div>
+
+                <div>
+                  <span className="text-[10px] font-bold text-[#999488] uppercase tracking-wider block mb-0.5">
+                    Penulis
+                  </span>
+                  <p className="font-semibold text-neutral-700 dark:text-[#A8A890]">
+                    {activeKitab.author}
+                  </p>
+                </div>
+
+                <div>
+                  <span className="text-[10px] font-bold text-[#999488] uppercase tracking-wider block mb-0.5">
+                    Kategori
+                  </span>
+                  <p className="font-medium text-amber-700 dark:text-amber-400 capitalize">
+                    {activeKitab.category}
+                  </p>
+                </div>
+
+                {activeKitab.description && (
+                  <div>
+                    <span className="text-[10px] font-bold text-[#999488] uppercase tracking-wider block mb-0.5">
+                      Ringkasan / Abstrak
+                    </span>
+                    <p className="text-[#777266] dark:text-[#A8A890] leading-relaxed">
+                      {activeKitab.description}
+                    </p>
+                  </div>
+                )}
+
+                {activeKitab.createdAt && (
+                  <div>
+                    <span className="text-[10px] font-bold text-[#999488] uppercase tracking-wider block mb-0.5">
+                      Tanggal Publikasi
+                    </span>
+                    <p className="text-[#777266] dark:text-[#A8A890]">
+                      {new Date(activeKitab.createdAt).toLocaleDateString('id-ID', {
+                        day: 'numeric',
+                        month: 'long',
+                        year: 'numeric'
+                      })}
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <>
           <h3 className="font-serif font-bold text-[#5A5A40] dark:text-[#E5E1D8] text-sm mb-3 flex items-center justify-between pb-2 border-b border-[#E5E1D8] dark:border-[#3A3A30]">
             <span className="flex items-center gap-2">
-              <BookOpen className="w-4 h-4 text-[#5A5A40]" /> Daftar Isi & Pencarian
+              <BookOpen className="w-4 h-4 text-[#5A5A40]" /> {indexLabel} & Pencarian
             </span>
           </h3>
 
@@ -1466,7 +1678,7 @@ export default function KitabReader() {
                           >
                             <span className="truncate flex items-center gap-1">
                               <span className="text-[10px] text-stone-400 dark:text-[#999488] font-mono mr-1">
-                                {ch.nodeType || (ch.isSubChapter ? 'Fasal' : 'Bab')} {ch.number}:
+                                {ch.number}
                               </span>
                               <span>{ch.title}</span>
                             </span>
@@ -1543,21 +1755,23 @@ export default function KitabReader() {
               )}
             </div>
           )}
+          </>
+          )}
         </div>
 
         {/* Public Discussion Board (Real-time live comments) */}
         <div className={activeTab === 'discussion' ? 'block' : 'hidden lg:block'}>
-          <DiscussionPanel kitabId={activeKitab.id} chapterId={activeChapter.id} />
+          <DiscussionPanel kitabId={activeKitab.id} chapterId={activeChapter?.id || ''} />
           
           {/* Helpful Instructions box under Discussion Panel for Desktop/Tablet */}
           <div className="hidden lg:block mt-6">
             <div id="instructions-box" className="bg-[#F9F6F0] dark:bg-[#181814] border border-[#E5E1D8] dark:border-[#3A3A30] rounded-xl p-5 shadow-none text-xs space-y-3.5 leading-relaxed text-[#333333] dark:text-[#E5E1D8]">
               <h4 className="font-serif font-bold text-[#5A5A40] dark:text-[#E5E1D8] text-sm flex items-center gap-1.5 pb-2 border-b border-[#E5E1D8] dark:border-[#3A3A30]">
-                <Sparkles className="w-4 h-4 text-[#5A5A40]" /> Panduan KitabDigital
+                <Sparkles className="w-4 h-4 text-[#5A5A40]" /> Panduan Khazanah Digital
               </h4>
               <ul className="list-disc pl-4 space-y-2 text-[#777266] dark:text-[#A8A890]">
                 <li>
-                  <strong>Membaca Nyaman:</strong> Buka kitab pilihan, klik ikon gerigi (<Settings className="w-3.5 h-3.5 inline text-[#5A5A40]" />) untuk menyesuaikan ukuran teks Arab, spasi, dan latar belakang malam.
+                  <strong>Membaca Nyaman:</strong> Buka karya pilihan, klik ikon gerigi (<Settings className="w-3.5 h-3.5 inline text-[#5A5A40]" />) untuk menyesuaikan ukuran teks, spasi, dan latar belakang malam.
                 </li>
                 <li>
                   <strong>Sorotan & Catatan:</strong> Ketuk baris atau terjemahan saat membaca untuk menyoroti warna dan menulis ulasan pribadi Anda.
@@ -1566,7 +1780,7 @@ export default function KitabReader() {
                   <strong>Pengingat Harian:</strong> Tentukan jadwal harian Anda pada menu <em>Target Harian</em> untuk melacak keaktifan harian Anda.
                 </li>
                 <li>
-                  <strong>Diskusi Terbuka:</strong> Bertukar pendapat mengenai kandungan kitab melalui papan komentar secara langsung.
+                  <strong>Diskusi Terbuka:</strong> Bertukar pendapat mengenai kandungan karya melalui papan komentar secara langsung.
                 </li>
               </ul>
             </div>

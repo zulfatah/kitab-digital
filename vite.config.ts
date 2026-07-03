@@ -15,29 +15,29 @@ export default defineConfig(() => {
           enabled: true
         },
         manifest: {
-          name: 'Kitab Reader',
-          short_name: 'Kitab',
-          description: 'Aplikasi pembaca kitab kuning kolaboratif.',
+          name: 'Khazanah Digital',
+          short_name: 'Khazanah',
+          description: 'Khazanah Digital adalah platform untuk menulis, membaca, menerbitkan, dan membagikan kitab, buku, manuskrip, artikel, serta karya ilmiah dengan struktur hierarki tanpa batas.',
           theme_color: '#FDFBF7',
           background_color: '#FDFBF7',
           display: 'standalone',
           icons: [
             {
-              src: '/favicon.svg',
+              src: '/favicon.png',
               sizes: '192x192',
-              type: 'image/svg+xml',
+              type: 'image/png',
               purpose: 'any'
             },
             {
-              src: '/favicon.svg',
+              src: '/favicon.png',
               sizes: '512x512',
-              type: 'image/svg+xml',
+              type: 'image/png',
               purpose: 'any'
             },
             {
-              src: '/favicon.svg',
+              src: '/favicon.png',
               sizes: '192x192',
-              type: 'image/svg+xml',
+              type: 'image/png',
               purpose: 'maskable'
             }
           ]
@@ -58,6 +58,7 @@ export default defineConfig(() => {
       allowedHosts: [
         'kitabdigital.zoeldev.my.id',
         'kitab.zoeldev.my.id',
+        'khazanah.zoeldev.my.id',
         'localhost',
         '127.0.0.1',
         '.run.app',

@@ -64,23 +64,29 @@ async function fetchWithAuth(url: string, options: RequestInit = {}): Promise<an
 function pollEndpoint<T>(
   url: string,
   callback: (data: T) => void,
-  intervalMs = 3000,
+  intervalMs = 30000,
   fallbackValue: T
 ): () => void {
   let active = true;
   let timerId: any = null;
+  let currentInterval = intervalMs;
 
   const fetchData = async () => {
     if (!active) return;
     try {
       const data = await fetchWithAuth(url);
-      if (active) callback(data);
+      if (active) {
+        callback(data);
+        currentInterval = intervalMs; // Reset on success
+      }
     } catch (e) {
       // If unauthorized or network error, fallback gracefully
       console.warn(`Polling failed for ${url}:`, e);
+      // Exponential backoff, up to 5 minutes max
+      currentInterval = Math.min(currentInterval * 1.5, 300000);
     } finally {
       if (active) {
-        timerId = setTimeout(fetchData, intervalMs);
+        timerId = setTimeout(fetchData, currentInterval);
       }
     }
   };
@@ -123,7 +129,7 @@ export const dbService = {
         setLocalData(`prefs_${email}`, data);
         callback(data);
       },
-      4000,
+      60000,
       getLocalData<UserPreferences>(`prefs_${email}`, DEFAULT_PREFERENCES)
     );
   },
@@ -183,7 +189,7 @@ export const dbService = {
         setLocalData(`bookmarks_${email}`, data);
         callback(data);
       },
-      4000,
+      60000,
       getLocalData<Bookmark[]>(`bookmarks_${email}`, [])
     );
   },
@@ -261,7 +267,7 @@ export const dbService = {
         setLocalData(`annotations_${email}`, data);
         callback(data);
       },
-      4000,
+      60000,
       getLocalData<Annotation[]>(`annotations_${email}`, [])
     );
   },
@@ -313,7 +319,7 @@ export const dbService = {
         setLocalData(`custom_kitabs_${userEmail}`, data);
         callback(data);
       },
-      5000,
+      60000,
       getLocalData<Kitab[]>(`custom_kitabs_${userEmail}`, [])
     );
   },
@@ -338,7 +344,7 @@ export const dbService = {
       (data) => {
         callback(data);
       },
-      4000,
+      60000,
       []
     );
   },
@@ -380,7 +386,7 @@ export const dbService = {
         setLocalData(`schedule_${email}`, data);
         callback(data);
       },
-      5000,
+      60000,
       defaultSchedule
     );
   },
@@ -468,7 +474,7 @@ export const dbService = {
       (data) => {
         callback(data);
       },
-      3000,
+      60000,
       []
     );
   },
@@ -490,7 +496,7 @@ export const dbService = {
       (data) => {
         callback(data);
       },
-      3000,
+      60000,
       []
     );
   },
@@ -512,7 +518,7 @@ export const dbService = {
       (data) => {
         callback(data);
       },
-      4000,
+      60000,
       []
     );
   },
@@ -540,7 +546,7 @@ export const dbService = {
         const filtered = data.filter(p => p.activeKitabId === kitabId);
         callback(filtered);
       },
-      3000,
+      60000,
       []
     );
   },
@@ -562,7 +568,7 @@ export const dbService = {
       (data) => {
         callback(data);
       },
-      3000,
+      60000,
       []
     );
   },
