@@ -79,6 +79,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [customKitabs, setCustomKitabs] = useState<Kitab[]>([]);
   const [activeSchedule, setActiveSchedule] = useState<ReadingSchedule | null>(null);
+  const lastRemindedTimeRef = React.useRef<string>('');
 
   // Navigation
   const [view, setView] = useState<'library' | 'reader' | 'writer' | 'schedule' | 'collaboration' | 'profile'>('library');
@@ -485,12 +486,29 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       const now = new Date();
       const currentDayName = now.toLocaleDateString('id-ID', { weekday: 'long' }); // e.g., 'Senin'
       const currentTimeStr = now.toTimeString().split(' ')[0].substring(0, 5); // e.g., '19:00'
+      const todayDateStr = now.toDateString();
+      const uniqueReminderKey = `${todayDateStr}_${currentTimeStr}`;
 
-      if (
-        activeSchedule.activeDays.includes(currentDayName) &&
-        activeSchedule.reminderTime === currentTimeStr
-      ) {
-        // Trigger pengingat harian
+      // Check if already triggered in this precise minute
+      if (lastRemindedTimeRef.current === uniqueReminderKey) {
+        return;
+      }
+
+      // Explicit day name mappings to avoid locale support issues
+      const daysIndo = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+      const daysEng = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      const currentDayIndo = daysIndo[now.getDay()];
+      const currentDayEng = daysEng[now.getDay()];
+
+      const matchesDay = activeSchedule.activeDays.includes(currentDayIndo) || 
+                         activeSchedule.activeDays.includes(currentDayEng) ||
+                         activeSchedule.activeDays.includes(currentDayName);
+
+      const matchesTime = activeSchedule.reminderTime === currentTimeStr;
+
+      if (matchesDay && matchesTime) {
+        lastRemindedTimeRef.current = uniqueReminderKey;
+        // Trigger daily reminder
         addToast(
           'Waktunya Membaca Kitab 📖',
           `Pengingat Jadwal: Mari luangkan waktu ${activeSchedule.dailyGoalMinutes} menit hari ini untuk mendalami ilmu suci.`,
@@ -499,9 +517,11 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       }
     };
 
-    const interval = setInterval(checkReminder, 60000); // Check every minute
+    const interval = setInterval(checkReminder, 30000); // Check every 30 seconds for precise matching
+    // Run immediately on schedule mount or change
+    checkReminder();
     return () => clearInterval(interval);
-  }, [activeSchedule]);
+  }, [activeSchedule, addToast]);
 
   return (
     <AppContext.Provider

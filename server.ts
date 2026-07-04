@@ -1,9 +1,11 @@
 import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
+import fs from 'fs';
 import jwt from 'jsonwebtoken';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import { initializeDatabase, dbService, getDatabaseStatus } from './server/db';
+import { getVapidPublicKey, sendPushToUser } from './server/push-service';
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -52,6 +54,63 @@ const optionalAuthenticateJWT = (req: AuthenticatedRequest, res: Response, next:
     next();
   }
 };
+
+function startScheduleChecker() {
+  console.log('Initiating reading schedule background checker (30-second interval)...');
+  
+  // Track notifications sent in the current minute to prevent duplicate sends
+  // Key format: `${email}_${dateString}_${hour}:${minute}`
+  const sentCache = new Set<string>();
+
+  setInterval(async () => {
+    try {
+      // Clear cache if it gets too large
+      if (sentCache.size > 1000) {
+        sentCache.clear();
+      }
+
+      const schedules = await dbService.getAllReadingSchedules();
+      if (!schedules || schedules.length === 0) return;
+
+      const now = new Date();
+      // Translate to standard day names stored in schedule (supporting both English and Indonesian)
+      const daysEng = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      const daysIndo = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+      const todayNameEng = daysEng[now.getDay()];
+      const todayNameIndo = daysIndo[now.getDay()];
+
+      // Format HH:MM
+      const currentHour = String(now.getHours()).padStart(2, '0');
+      const currentMinute = String(now.getMinutes()).padStart(2, '0');
+      const currentTimeStr = `${currentHour}:${currentMinute}`;
+      const todayDateStr = now.toDateString();
+
+      for (const schedule of schedules) {
+        const { email, activeDays, reminderTime } = schedule;
+        if (!email || !activeDays || !reminderTime) continue;
+
+        // Check if today matches activeDays (English or Indonesian) and time matches reminderTime
+        const matchesDay = activeDays.includes(todayNameEng) || activeDays.includes(todayNameIndo);
+        const matchesTime = reminderTime === currentTimeStr;
+
+        if (matchesDay && matchesTime) {
+          const cacheKey = `${email}_${todayDateStr}_${currentTimeStr}`;
+          if (!sentCache.has(cacheKey)) {
+            sentCache.add(cacheKey);
+            console.log(`[SCHEDULE REMINDER] Sending reminder notification to ${email}...`);
+            await sendPushToUser(email, {
+              title: 'Waktunya Membaca! 📖',
+              body: `Saatnya meluangkan waktu untuk mencapai target harian membaca ${schedule.dailyGoalMinutes || 15} menit hari ini.`,
+              url: '/'
+            });
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Error running reading schedule checker:', err);
+    }
+  }, 30000); // Check every 30 seconds
+}
 
 async function startServer() {
   // Initialize Database Pool
@@ -131,6 +190,45 @@ async function startServer() {
       res.json({ message: 'Tes koneksi database selesai dilakukan', status });
     } catch (e) {
       res.status(500).json({ error: 'Gagal melakukan tes ulang koneksi database', details: e instanceof Error ? e.message : String(e) });
+    }
+  });
+
+  // --- NATIVE WEB PUSH NOTIFICATION ENDPOINTS ---
+  app.get('/api/notifications/vapid-public-key', (req: Request, res: Response) => {
+    res.json({ publicKey: getVapidPublicKey() });
+  });
+
+  app.post('/api/notifications/subscribe', authenticateJWT, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const email = req.user!.email;
+      const { subscription } = req.body;
+      if (!subscription || !subscription.endpoint) {
+        return res.status(400).json({ error: 'Data subscription tidak valid' });
+      }
+
+      const p256dh = subscription.keys?.p256dh || '';
+      const auth = subscription.keys?.auth || '';
+
+      await dbService.savePushSubscription(email, subscription.endpoint, p256dh, auth);
+      res.json({ success: true });
+    } catch (e: any) {
+      console.error('Error saving subscription:', e);
+      res.status(500).json({ error: 'Gagal mendaftarkan perangkat notifikasi' });
+    }
+  });
+
+  app.post('/api/notifications/test', authenticateJWT, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const email = req.user!.email;
+      const result = await sendPushToUser(email, {
+        title: 'Tes Notifikasi Sukses! 🎉',
+        body: 'Khazanah Digital berhasil terhubung dengan sistem Web Push perangkat Anda.',
+        url: '/'
+      });
+      res.json({ success: true, result });
+    } catch (e: any) {
+      console.error('Error sending test notification:', e);
+      res.status(500).json({ error: 'Gagal mengirimkan notifikasi uji coba' });
     }
   });
 
@@ -436,6 +534,9 @@ async function startServer() {
         return isOwner && canSee;
       });
 
+      const followers = await dbService.getFollowers(email);
+      const following = await dbService.getFollowing(email);
+
       if (!user) {
         if (userKitabs.length > 0) {
           const authorName = userKitabs[0].author || 'Penulis Kitab';
@@ -444,8 +545,11 @@ async function startServer() {
               email,
               displayName: authorName,
               photoURL: '',
+              bio: '',
               createdAt: userKitabs[0].createdAt || new Date().toISOString(),
-              lastLoginAt: userKitabs[0].createdAt || new Date().toISOString()
+              lastLoginAt: userKitabs[0].createdAt || new Date().toISOString(),
+              followers,
+              following
             },
             kitabs: userKitabs
           });
@@ -454,12 +558,89 @@ async function startServer() {
       }
 
       res.json({
-        profile: user,
+        profile: {
+          ...user,
+          followers,
+          following
+        },
         kitabs: userKitabs
       });
     } catch (e) {
       console.error('Error fetching user profile:', e);
       res.status(500).json({ error: 'Gagal mengambil profil pengguna' });
+    }
+  });
+
+  // Update profile endpoint
+  app.post('/api/users/profile/update', authenticateJWT, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { displayName, bio } = req.body;
+      const email = req.user?.email;
+      if (!email) {
+        return res.status(401).json({ error: 'Tidak diizinkan' });
+      }
+      if (!displayName || displayName.trim().length === 0) {
+        return res.status(400).json({ error: 'Nama tampilan tidak boleh kosong' });
+      }
+
+      await dbService.updateUserProfile(email, displayName.trim(), (bio || '').trim());
+      res.json({ success: true });
+    } catch (e) {
+      console.error('Error updating user profile:', e);
+      res.status(500).json({ error: 'Gagal memperbarui profil' });
+    }
+  });
+
+  // Follow user endpoint
+  app.post('/api/users/follow/:email', authenticateJWT, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const followerEmail = req.user?.email;
+      const followingEmail = req.params.email.trim().toLowerCase();
+
+      if (!followerEmail) {
+        return res.status(401).json({ error: 'Tidak diizinkan' });
+      }
+      if (followerEmail.toLowerCase() === followingEmail.toLowerCase()) {
+        return res.status(400).json({ error: 'Anda tidak dapat mengikuti diri sendiri' });
+      }
+
+      await dbService.followUser(followerEmail, followingEmail);
+      
+      // Send real-time push notification
+      try {
+        const followerProfile = await dbService.getUser(followerEmail);
+        const followerName = followerProfile?.displayName || followerEmail;
+        await sendPushToUser(followingEmail, {
+          title: 'Pengikut Baru! 👥',
+          body: `${followerName} sekarang mengikuti Anda di Khazanah Digital.`,
+          url: '/'
+        });
+      } catch (pushErr) {
+        console.error('Error sending follow push notification:', pushErr);
+      }
+
+      res.json({ success: true });
+    } catch (e) {
+      console.error('Error following user:', e);
+      res.status(500).json({ error: 'Gagal mengikuti pengguna' });
+    }
+  });
+
+  // Unfollow user endpoint
+  app.post('/api/users/unfollow/:email', authenticateJWT, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const followerEmail = req.user?.email;
+      const followingEmail = req.params.email.trim().toLowerCase();
+
+      if (!followerEmail) {
+        return res.status(401).json({ error: 'Tidak diizinkan' });
+      }
+
+      await dbService.unfollowUser(followerEmail, followingEmail);
+      res.json({ success: true });
+    } catch (e) {
+      console.error('Error unfollowing user:', e);
+      res.status(500).json({ error: 'Gagal batal mengikuti pengguna' });
     }
   });
 
@@ -487,7 +668,7 @@ async function startServer() {
     try {
       const email = req.user!.email;
       const name = req.user!.displayName;
-      const { id, kitabId, kitabTitle, title, chapters, status } = req.body;
+      const { id, kitabId, kitabTitle, title, chapters, status, type, content, createdAt } = req.body;
       const draft = {
         id,
         kitabId,
@@ -496,9 +677,11 @@ async function startServer() {
         authorEmail: email,
         authorName: name,
         chapters,
-        createdAt: new Date().toISOString(),
+        createdAt: createdAt || new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        status: status || 'open'
+        status: status || 'open',
+        type: type || 'kitab',
+        content: content || ''
       };
       await dbService.saveCollabDraft(draft);
       res.json({ success: true, draft });
@@ -677,10 +860,101 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
-    app.get('*', (req: Request, res: Response) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+    app.get('*', async (req: Request, res: Response) => {
+      const distPath = path.join(process.cwd(), 'dist');
+      let html = fs.readFileSync(path.join(distPath, 'index.html'), 'utf8');
+      
+      const host = req.get('host') || 'khazanah.zoeldev.my.id';
+      const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+      const baseUrl = `${protocol}://${host}`;
+      const fullUrl = `${baseUrl}${req.originalUrl}`;
+
+      // Helper function to inject metadata robustly (even across multi-line tags in index.html)
+      const injectDynamicMetaTags = (htmlString: string, options: { title: string; description: string; url: string }) => {
+        const { title, description, url } = options;
+        const escapedTitle = title.replace(/"/g, '&quot;');
+        const escapedDesc = description.replace(/"/g, '&quot;');
+        const escapedUrl = url.replace(/"/g, '&quot;');
+
+        // Replace tab title
+        let updatedHtml = htmlString.replace(/<title>[\s\S]*?<\/title>/gi, `<title>${escapedTitle}</title>`);
+
+        // Replace content attribute inside specific meta tags (handles spaces and newlines safely)
+        const replaceContentAttr = (tempHtml: string, attributeName: string, attributeValue: string, newContent: string) => {
+          const regex = new RegExp(`<meta\\s+[^>]*?${attributeName}="${attributeValue}"[^>]*?>`, 'gi');
+          return tempHtml.replace(regex, (match) => {
+            return match.replace(/content="[\s\S]*?"/gi, `content="${newContent}"`);
+          });
+        };
+
+        updatedHtml = replaceContentAttr(updatedHtml, 'property', 'og:title', escapedTitle);
+        updatedHtml = replaceContentAttr(updatedHtml, 'property', 'og:description', escapedDesc);
+        updatedHtml = replaceContentAttr(updatedHtml, 'property', 'og:url', escapedUrl);
+        updatedHtml = replaceContentAttr(updatedHtml, 'name', 'twitter:title', escapedTitle);
+        updatedHtml = replaceContentAttr(updatedHtml, 'name', 'twitter:description', escapedDesc);
+        updatedHtml = replaceContentAttr(updatedHtml, 'name', 'title', escapedTitle);
+        updatedHtml = replaceContentAttr(updatedHtml, 'name', 'description', escapedDesc);
+
+        // Replace canonical href
+        updatedHtml = updatedHtml.replace(/<link\s+[^>]*?rel="canonical"[^>]*?>/gi, (match) => {
+          return match.replace(/href="[\s\S]*?"/gi, `href="${escapedUrl}"`);
+        });
+
+        return updatedHtml;
+      };
+
+      // Dynamic OG tags for kitab/article/book sharing
+      const kitabId = req.query.kitabId as string;
+      if (kitabId) {
+        try {
+          const kitabs = await dbService.getCustomKitabs("");
+          const kitab = kitabs.find(k => k.id === kitabId);
+          if (kitab) {
+            const title = `${kitab.title} - Khazanah Digital`;
+            const rawDesc = kitab.description || '';
+            const description = rawDesc.trim()
+              ? `${rawDesc.substring(0, 155)}${rawDesc.length > 155 ? '...' : ''}`
+              : `Baca ${kitab.type || 'buku'} "${kitab.title}" karya ${kitab.author || 'Penulis'} secara lengkap dan gratis di Khazanah Digital.`;
+            
+            html = injectDynamicMetaTags(html, {
+              title,
+              description,
+              url: fullUrl
+            });
+          } else {
+            html = injectDynamicMetaTags(html, {
+              title: 'Khazanah Digital - Platform Menulis, Membaca, dan Berbagi Karya',
+              description: 'Menulis karya, kitab, buku, manuskrip, dan artikel ilmiah dengan struktur hierarki tanpa batas. Gratis untuk semua penulis.',
+              url: fullUrl
+            });
+          }
+        } catch (e) {
+          console.error('Error generating dynamic OG tags:', e);
+          html = injectDynamicMetaTags(html, {
+            title: 'Khazanah Digital - Platform Menulis, Membaca, dan Berbagi Karya',
+            description: 'Menulis karya, kitab, buku, manuskrip, dan artikel ilmiah dengan struktur hierarki tanpa batas. Gratis untuk semua penulis.',
+            url: fullUrl
+          });
+        }
+      } else {
+        html = injectDynamicMetaTags(html, {
+          title: 'Khazanah Digital - Platform Menulis, Membaca, dan Berbagi Karya',
+          description: 'Menulis karya, kitab, buku, manuskrip, dan artikel ilmiah dengan struktur hierarki tanpa batas. Gratis untuk semua penulis.',
+          url: fullUrl
+        });
+      }
+
+      // Replace hardcoded custom domains with the actual requested base URL dynamically
+      // This ensures WhatsApp, Telegram, etc. can fetch absolute URL assets correctly
+      html = html.replace(/https:\/\/khazanah\.zoeldev\.my\.id/g, baseUrl);
+      html = html.replace(/https:\/\/kitab\.zoeldev\.my\.id/g, baseUrl);
+
+      res.send(html);
     });
   }
+
+  // Start background reading schedule checker
+  startScheduleChecker();
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Express full-stack server running on http://localhost:${PORT}`);

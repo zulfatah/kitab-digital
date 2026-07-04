@@ -598,5 +598,31 @@ export const dbService = {
     } catch (e) {
       console.error('Gagal update bab kitab utama kustom', e);
     }
+  },
+
+  async updateCustomKitabContent(kitabId: string, content: string): Promise<void> {
+    try {
+      const localKitabs = getLocalData<Kitab[]>('custom_kitabs_guest', []);
+      const index = localKitabs.findIndex(k => k.id === kitabId);
+      if (index > -1) {
+        localKitabs[index].content = content;
+        setLocalData('custom_kitabs_guest', localKitabs);
+      }
+
+      const token = localStorage.getItem('auth_token');
+      if (token) {
+        const kitabs: Kitab[] = await fetchWithAuth('/api/custom_kitabs');
+        const kitab = kitabs.find(k => k.id === kitabId);
+        if (kitab) {
+          kitab.content = content;
+          await fetchWithAuth('/api/custom_kitabs', {
+            method: 'POST',
+            body: JSON.stringify(kitab)
+          });
+        }
+      }
+    } catch (e) {
+      console.error('Gagal update konten artikel utama kustom', e);
+    }
   }
 };

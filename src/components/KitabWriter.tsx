@@ -7,7 +7,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useApp } from '../contexts/AppContext';
 import { Kitab, Chapter, Paragraph, TreeNode, buildTree, sortChaptersByTree, migrateChaptersToTree, recalculateHierarchicalNumbers } from '../types';
 import RichTextEditor from './RichTextEditor';
-import { Plus, Trash2, Save, BookOpen, FileText, Sparkles, X, ArrowLeft, Layers, File, ChevronRight, ChevronDown, ArrowUp, ArrowDown, FolderPlus, RefreshCw } from 'lucide-react';
+import { Plus, Trash2, Save, BookOpen, FileText, Sparkles, X, ArrowLeft, Layers, File, ChevronRight, ChevronDown, ArrowUp, ArrowDown, FolderPlus, RefreshCw, Settings } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface AutoResizeTextareaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
@@ -1468,6 +1468,27 @@ export default function KitabWriter() {
         </div>
       </div>
     </form>
+
+    {/* Panduan Khazanah Digital diletakkan di bawah untuk kenyamanan desktop & mobile */}
+    <div id="instructions-box-bottom" className="mt-8 bg-[#F9F6F0] dark:bg-[#181814] border border-[#E5E1D8] dark:border-[#3A3A30] rounded-xl p-6 text-xs space-y-3.5 leading-relaxed text-[#333333] dark:text-[#E5E1D8] max-w-7xl mx-auto">
+      <h4 className="font-serif font-bold text-[#5A5A40] dark:text-[#E5E1D8] text-sm flex items-center gap-1.5 pb-2 border-b border-[#E5E1D8] dark:border-[#3A3A30]">
+        <Sparkles className="w-4 h-4 text-[#5A5A40]" /> Panduan Khazanah Digital
+      </h4>
+      <ul className="list-disc pl-4 space-y-2 text-[#777266] dark:text-[#A8A890]">
+        <li>
+          <strong>Membaca Nyaman:</strong> Buka karya pilihan, klik ikon gerigi (<Settings className="w-3.5 h-3.5 inline text-[#5A5A40]" />) untuk menyesuaikan ukuran teks, spasi, dan latar belakang malam.
+        </li>
+        <li>
+          <strong>Sorotan & Catatan:</strong> Ketuk baris atau terjemahan saat membaca untuk menyoroti warna dan menulis ulasan pribadi Anda.
+        </li>
+        <li>
+          <strong>Pengingat Harian:</strong> Tentukan jadwal harian Anda pada menu <em>Target Harian</em> untuk melacak keaktifan harian Anda.
+        </li>
+        <li>
+          <strong>Diskusi Terbuka:</strong> Bertukar pendapat mengenai kandungan karya melalui papan komentar secara langsung.
+        </li>
+      </ul>
+    </div>
   </>
 );
 }

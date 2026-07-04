@@ -20,7 +20,8 @@ import {
   Trash2,
   Sparkles,
   Type,
-  Loader2
+  Loader2,
+  Eraser
 } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 
@@ -62,6 +63,8 @@ export default function RichTextEditor({
     alignCenter: false,
     alignRight: false,
     alignJustify: false,
+    unorderedList: false,
+    orderedList: false,
   });
 
   const [wordCount, setWordCount] = useState(0);
@@ -164,6 +167,8 @@ export default function RichTextEditor({
       alignCenter: document.queryCommandState('justifyCenter'),
       alignRight: document.queryCommandState('justifyRight'),
       alignJustify: document.queryCommandState('justifyFull'),
+      unorderedList: document.queryCommandState('insertUnorderedList'),
+      orderedList: document.queryCommandState('insertOrderedList'),
     });
   };
 
@@ -178,6 +183,57 @@ export default function RichTextEditor({
     document.execCommand(command, false, val);
     handleInput();
     updateToolbarStates();
+  };
+
+  const cleanSelectedHtml = () => {
+    if (!editorRef.current || disabled) return;
+    
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+      addToast('Pilih Teks Terlebih Dahulu', 'Silakan seleksi (blok) bagian teks yang ingin dibersihkan dari tag tersembunyi (seperti br, p, div, dll).', 'info');
+      return;
+    }
+
+    try {
+      const range = selection.getRangeAt(0);
+      
+      // Clone selection contents to a temporary div to parse HTML
+      const container = document.createElement('div');
+      container.appendChild(range.cloneContents());
+      
+      // Convert break tags and block paragraph endings to newlines/spaces
+      let htmlContent = container.innerHTML;
+      htmlContent = htmlContent.replace(/<br\s*\/?>/gi, ' ');
+      htmlContent = htmlContent.replace(/<\/p>/gi, '\n');
+      htmlContent = htmlContent.replace(/<\/div>/gi, '\n');
+      
+      // Create a temporary element to extract clean text without other hidden tags
+      const tempElement = document.createElement('div');
+      tempElement.innerHTML = htmlContent;
+      
+      // Get the stripped content
+      const cleanText = tempElement.innerText || tempElement.textContent || '';
+      
+      // Delete selection
+      range.deleteContents();
+      
+      // Insert clean text
+      const textNode = document.createTextNode(cleanText);
+      range.insertNode(textNode);
+      
+      // Refocus editor and select the new node
+      if (editorRef.current) {
+        editorRef.current.focus();
+      }
+      
+      // Trigger change and recalculate
+      handleInput();
+      
+      addToast('Teks Diperbaiki', 'Berhasil membersihkan tag HTML tersembunyi (seperti br, p, div, dll) dari teks terpilih.', 'success');
+    } catch (error) {
+      console.error('Error cleaning selection tags:', error);
+      addToast('Gagal Memperbaiki Teks', 'Terjadi kesalahan saat membersihkan tag tersembunyi.', 'error');
+    }
   };
 
   // Color options for theological highlights or citation references
@@ -325,7 +381,9 @@ export default function RichTextEditor({
                 e.preventDefault();
                 executeCommand('insertUnorderedList');
               }}
-              className="p-1.5 rounded text-[#777266] dark:text-[#A8A890] hover:bg-[#E5E1D8] dark:hover:bg-stone-800 transition-all cursor-pointer"
+              className={`p-1.5 rounded transition-all cursor-pointer hover:bg-[#E5E1D8] dark:hover:bg-stone-800 ${
+                editorState.unorderedList ? 'bg-[#5A5A40] text-white hover:bg-[#454530]' : 'text-[#777266] dark:text-[#A8A890]'
+              }`}
               title="Daftar Bulatan"
             >
               <List className="w-3.5 h-3.5" />
@@ -336,7 +394,9 @@ export default function RichTextEditor({
                 e.preventDefault();
                 executeCommand('insertOrderedList');
               }}
-              className="p-1.5 rounded text-[#777266] dark:text-[#A8A890] hover:bg-[#E5E1D8] dark:hover:bg-stone-800 transition-all cursor-pointer"
+              className={`p-1.5 rounded transition-all cursor-pointer hover:bg-[#E5E1D8] dark:hover:bg-stone-800 ${
+                editorState.orderedList ? 'bg-[#5A5A40] text-white hover:bg-[#454530]' : 'text-[#777266] dark:text-[#A8A890]'
+              }`}
               title="Daftar Angka"
             >
               <ListOrdered className="w-3.5 h-3.5" />
@@ -408,6 +468,18 @@ export default function RichTextEditor({
               title="Redo"
             >
               <RotateCw className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                cleanSelectedHtml();
+              }}
+              className="p-1.5 rounded text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 transition-all cursor-pointer flex items-center gap-1"
+              title="Perbaiki Teks Seleksi (Hapus tag HTML tersembunyi seperti br, p, div, dll)"
+            >
+              <Eraser className="w-3.5 h-3.5 text-amber-500" />
+              <span className="hidden md:inline font-semibold text-[10px] uppercase tracking-wider">Bersihkan Tag</span>
             </button>
             <button
               type="button"

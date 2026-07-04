@@ -210,7 +210,7 @@ function MainLayout() {
           />
           <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 items-start">
             {/* View Port: Directory / Active Reader / Writer Form / Schedule */}
-            <div className={(view === 'reader' || view === 'profile') ? "xl:col-span-4" : "xl:col-span-3"}>
+            <div className={(view === 'reader' || view === 'profile' || view === 'writer' || view === 'collaboration') ? "xl:col-span-4" : "xl:col-span-3"}>
               {view === 'library' && <KitabList />}
               {view === 'reader' && <KitabReader />}
               {view === 'writer' && <KitabWriter />}
@@ -219,8 +219,8 @@ function MainLayout() {
               {view === 'profile' && <UserProfile />}
             </div>
 
-            {/* Right sidebar - only show when not in reader or profile mode */}
-            {view !== 'reader' && view !== 'profile' && (
+            {/* Right sidebar - only show when not in reader, profile, writer, or collaboration mode */}
+            {view !== 'reader' && view !== 'profile' && view !== 'writer' && view !== 'collaboration' && (
               <div className="space-y-6">
                 {/* Helpful Instructions box */}
                 <div id="instructions-box" className="bg-[#F9F6F0] dark:bg-[#181814] border border-[#E5E1D8] dark:border-[#3A3A30] rounded-xl p-5 shadow-none text-xs space-y-3.5 leading-relaxed text-[#333333] dark:text-[#E5E1D8]">
@@ -241,6 +241,14 @@ function MainLayout() {
                       <strong>Diskusi Terbuka:</strong> Bertukar pendapat mengenai kandungan karya melalui papan komentar secara langsung.
                     </li>
                   </ul>
+                  {showInstallBtn && (
+                    <button
+                      onClick={handleInstallClick}
+                      className="w-full mt-4 flex items-center justify-center gap-2 bg-[#5A5A40] text-white py-2 px-4 rounded-lg text-xs font-bold hover:bg-[#777266] transition-colors cursor-pointer"
+                    >
+                      Instal Aplikasi
+                    </button>
+                  )}
                 </div>
               </div>
             )}

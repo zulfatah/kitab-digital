@@ -50,6 +50,8 @@ interface FallbackDB {
   collab_history: any[];
   collab_presence: any[];
   collab_comments: any[];
+  followers?: any[];
+  push_subscriptions?: any[];
 }
 
 const emptyFallbackDB: FallbackDB = {
@@ -64,7 +66,9 @@ const emptyFallbackDB: FallbackDB = {
   collab_merge_requests: [],
   collab_history: [],
   collab_presence: [],
-  collab_comments: []
+  collab_comments: [],
+  followers: [],
+  push_subscriptions: []
 };
 
 // Load or initialize fallback DB
@@ -139,7 +143,8 @@ async function runSchemaInitialization() {
       displayName VARCHAR(255) DEFAULT NULL,
       photoURL TEXT DEFAULT NULL,
       lastLoginAt VARCHAR(64) DEFAULT NULL,
-      createdAt VARCHAR(64) DEFAULT NULL
+      createdAt VARCHAR(64) DEFAULT NULL,
+      bio TEXT DEFAULT NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`,
 
     `CREATE TABLE IF NOT EXISTS user_preferences (
@@ -214,7 +219,9 @@ async function runSchemaInitialization() {
       chaptersJson LONGTEXT NOT NULL,
       createdAt VARCHAR(64) NOT NULL,
       updatedAt VARCHAR(64) NOT NULL,
-      status VARCHAR(32) DEFAULT 'open'
+      status VARCHAR(32) DEFAULT 'open',
+      type VARCHAR(32) DEFAULT 'kitab',
+      content LONGTEXT DEFAULT NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`,
 
     `CREATE TABLE IF NOT EXISTS collab_merge_requests (
@@ -232,7 +239,10 @@ async function runSchemaInitialization() {
       diffsJson LONGTEXT NOT NULL,
       reviewerEmail VARCHAR(255) DEFAULT NULL,
       reviewerName VARCHAR(255) DEFAULT NULL,
-      reviewFeedback TEXT DEFAULT NULL
+      reviewFeedback TEXT DEFAULT NULL,
+      type VARCHAR(32) DEFAULT 'kitab',
+      oldContent LONGTEXT DEFAULT NULL,
+      newContent LONGTEXT DEFAULT NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`,
 
     `CREATE TABLE IF NOT EXISTS collab_history (
@@ -244,7 +254,10 @@ async function runSchemaInitialization() {
       message TEXT NOT NULL,
       timestamp VARCHAR(64) NOT NULL,
       previousChaptersJson LONGTEXT,
-      mergedChaptersJson LONGTEXT
+      mergedChaptersJson LONGTEXT,
+      type VARCHAR(32) DEFAULT 'kitab',
+      previousContent LONGTEXT DEFAULT NULL,
+      mergedContent LONGTEXT DEFAULT NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`,
 
     `CREATE TABLE IF NOT EXISTS collab_presence (
@@ -269,6 +282,23 @@ async function runSchemaInitialization() {
       content TEXT NOT NULL,
       parentId VARCHAR(128),
       createdAt VARCHAR(64) NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`,
+
+    `CREATE TABLE IF NOT EXISTS followers (
+      id VARCHAR(128) PRIMARY KEY,
+      followerEmail VARCHAR(255) NOT NULL,
+      followingEmail VARCHAR(255) NOT NULL,
+      createdAt VARCHAR(64) NOT NULL,
+      UNIQUE KEY unique_follow (followerEmail, followingEmail)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`,
+
+    `CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id VARCHAR(128) PRIMARY KEY,
+      userEmail VARCHAR(255) NOT NULL,
+      endpoint TEXT NOT NULL,
+      p256dh TEXT NOT NULL,
+      auth TEXT NOT NULL,
+      createdAt VARCHAR(64) NOT NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`
   ];
 
@@ -281,6 +311,10 @@ async function runSchemaInitialization() {
   }
 
   // Column alteration migration
+  try {
+    await pool.query('ALTER TABLE users ADD COLUMN bio TEXT DEFAULT NULL');
+  } catch (err) {}
+
   try {
     await pool.query('ALTER TABLE custom_kitabs ADD COLUMN isPublic TINYINT DEFAULT 0');
   } catch (err) {
@@ -297,6 +331,36 @@ async function runSchemaInitialization() {
   } catch (err) {
     // Column already exists or table does not exist yet
   }
+
+  // collab_drafts alterations
+  try {
+    await pool.query('ALTER TABLE collab_drafts ADD COLUMN type VARCHAR(32) DEFAULT "kitab"');
+  } catch (err) {}
+  try {
+    await pool.query('ALTER TABLE collab_drafts ADD COLUMN content LONGTEXT DEFAULT NULL');
+  } catch (err) {}
+
+  // collab_merge_requests alterations
+  try {
+    await pool.query('ALTER TABLE collab_merge_requests ADD COLUMN type VARCHAR(32) DEFAULT "kitab"');
+  } catch (err) {}
+  try {
+    await pool.query('ALTER TABLE collab_merge_requests ADD COLUMN oldContent LONGTEXT DEFAULT NULL');
+  } catch (err) {}
+  try {
+    await pool.query('ALTER TABLE collab_merge_requests ADD COLUMN newContent LONGTEXT DEFAULT NULL');
+  } catch (err) {}
+
+  // collab_history alterations
+  try {
+    await pool.query('ALTER TABLE collab_history ADD COLUMN type VARCHAR(32) DEFAULT "kitab"');
+  } catch (err) {}
+  try {
+    await pool.query('ALTER TABLE collab_history ADD COLUMN previousContent LONGTEXT DEFAULT NULL');
+  } catch (err) {}
+  try {
+    await pool.query('ALTER TABLE collab_history ADD COLUMN mergedContent LONGTEXT DEFAULT NULL');
+  } catch (err) {}
 }
 
 // Core DB Access Operations
@@ -673,12 +737,15 @@ export const dbService = {
   },
 
   async saveCollabDraft(draft: any) {
-    const chaptersJson = JSON.stringify(draft.chapters);
+    const chaptersJson = JSON.stringify(draft.chapters || []);
     if (!isFallbackMode && pool) {
-      const q = `INSERT INTO collab_drafts (id, kitabId, kitabTitle, title, authorEmail, authorName, chaptersJson, createdAt, updatedAt, status)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                 ON DUPLICATE KEY UPDATE title = ?, chaptersJson = ?, updatedAt = ?, status = ?`;
-      await pool.query(q, [draft.id, draft.kitabId, draft.kitabTitle, draft.title, draft.authorEmail, draft.authorName, chaptersJson, draft.createdAt, draft.updatedAt, draft.status, draft.title, chaptersJson, draft.updatedAt, draft.status]);
+      const q = `INSERT INTO collab_drafts (id, kitabId, kitabTitle, title, authorEmail, authorName, chaptersJson, createdAt, updatedAt, status, type, content)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE title = ?, chaptersJson = ?, updatedAt = ?, status = ?, type = ?, content = ?`;
+      await pool.query(q, [
+        draft.id, draft.kitabId, draft.kitabTitle, draft.title, draft.authorEmail, draft.authorName, chaptersJson, draft.createdAt, draft.updatedAt, draft.status, draft.type || 'kitab', draft.content || '',
+        draft.title, chaptersJson, draft.updatedAt, draft.status, draft.type || 'kitab', draft.content || ''
+      ]);
     } else {
       const db = loadFallbackDB();
       const idx = db.collab_drafts.findIndex(d => d.id === draft.id);
@@ -838,6 +905,169 @@ export const dbService = {
       const db = loadFallbackDB();
       db.collab_comments.push(comment);
       saveFallbackDB(db);
+    }
+  },
+
+  // --- USER PROFILE & FOLLOWERS ---
+  async updateUserProfile(email: string, displayName: string, bio: string) {
+    const trimmedEmail = email.trim().toLowerCase();
+    if (!isFallbackMode && pool) {
+      await pool.query('UPDATE users SET displayName = ?, bio = ? WHERE email = ?', [displayName, bio, trimmedEmail]);
+    } else {
+      const db = loadFallbackDB();
+      const idx = db.users.findIndex(u => u.email === trimmedEmail);
+      if (idx > -1) {
+        db.users[idx] = { ...db.users[idx], displayName, bio };
+      } else {
+        // Create if missing
+        db.users.push({
+          uid: 'fallback_' + Math.random().toString(36).substr(2, 9),
+          email: trimmedEmail,
+          displayName,
+          bio,
+          photoURL: '',
+          createdAt: new Date().toISOString(),
+          lastLoginAt: new Date().toISOString()
+        });
+      }
+      saveFallbackDB(db);
+    }
+  },
+
+  async getFollowers(email: string) {
+    const trimmedEmail = email.trim().toLowerCase();
+    if (!isFallbackMode && pool) {
+      const [rows]: any = await pool.query('SELECT followerEmail FROM followers WHERE followingEmail = ?', [trimmedEmail]);
+      return rows.map((r: any) => r.followerEmail);
+    } else {
+      const db = loadFallbackDB();
+      if (!db.followers) db.followers = [];
+      return db.followers.filter(f => f.followingEmail === trimmedEmail).map(f => f.followerEmail);
+    }
+  },
+
+  async getFollowing(email: string) {
+    const trimmedEmail = email.trim().toLowerCase();
+    if (!isFallbackMode && pool) {
+      const [rows]: any = await pool.query('SELECT followingEmail FROM followers WHERE followerEmail = ?', [trimmedEmail]);
+      return rows.map((r: any) => r.followingEmail);
+    } else {
+      const db = loadFallbackDB();
+      if (!db.followers) db.followers = [];
+      return db.followers.filter(f => f.followerEmail === trimmedEmail).map(f => f.followingEmail);
+    }
+  },
+
+  async followUser(followerEmail: string, followingEmail: string) {
+    const fEmail = followerEmail.trim().toLowerCase();
+    const gEmail = followingEmail.trim().toLowerCase();
+    const id = `follow_${fEmail}_${gEmail}`.replace(/[@.]/g, '_');
+    const createdAt = new Date().toISOString();
+    if (!isFallbackMode && pool) {
+      const q = `INSERT IGNORE INTO followers (id, followerEmail, followingEmail, createdAt) VALUES (?, ?, ?, ?)`;
+      await pool.query(q, [id, fEmail, gEmail, createdAt]);
+    } else {
+      const db = loadFallbackDB();
+      if (!db.followers) db.followers = [];
+      const exists = db.followers.some(f => f.followerEmail === fEmail && f.followingEmail === gEmail);
+      if (!exists) {
+        db.followers.push({ id, followerEmail: fEmail, followingEmail: gEmail, createdAt });
+        saveFallbackDB(db);
+      }
+    }
+  },
+
+  async unfollowUser(followerEmail: string, followingEmail: string) {
+    const fEmail = followerEmail.trim().toLowerCase();
+    const gEmail = followingEmail.trim().toLowerCase();
+    if (!isFallbackMode && pool) {
+      await pool.query('DELETE FROM followers WHERE followerEmail = ? AND followingEmail = ?', [fEmail, gEmail]);
+    } else {
+      const db = loadFallbackDB();
+      if (!db.followers) db.followers = [];
+      db.followers = db.followers.filter(f => !(f.followerEmail === fEmail && f.followingEmail === gEmail));
+      saveFallbackDB(db);
+    }
+  },
+
+  async checkIsFollowing(followerEmail: string, followingEmail: string) {
+    const fEmail = followerEmail.trim().toLowerCase();
+    const gEmail = followingEmail.trim().toLowerCase();
+    if (!isFallbackMode && pool) {
+      const [rows]: any = await pool.query('SELECT id FROM followers WHERE followerEmail = ? AND followingEmail = ?', [fEmail, gEmail]);
+      return rows.length > 0;
+    } else {
+      const db = loadFallbackDB();
+      if (!db.followers) db.followers = [];
+      return db.followers.some(f => f.followerEmail === fEmail && f.followingEmail === gEmail);
+    }
+  },
+
+  // --- PUSH NOTIFICATIONS ---
+  async savePushSubscription(userEmail: string, endpoint: string, p256dh: string, auth: string) {
+    const email = userEmail.trim().toLowerCase();
+    const id = `sub_${Buffer.from(endpoint).toString('base64').substring(0, 50).replace(/[^a-zA-Z0-9]/g, '_')}`;
+    const createdAt = new Date().toISOString();
+    if (!isFallbackMode && pool) {
+      // Avoid duplicate endpoints
+      await pool.query('DELETE FROM push_subscriptions WHERE endpoint = ?', [endpoint]);
+      await pool.query(
+        'INSERT INTO push_subscriptions (id, userEmail, endpoint, p256dh, auth, createdAt) VALUES (?, ?, ?, ?, ?, ?)',
+        [id, email, endpoint, p256dh, auth, createdAt]
+      );
+    } else {
+      const db = loadFallbackDB();
+      if (!db.push_subscriptions) db.push_subscriptions = [];
+      db.push_subscriptions = db.push_subscriptions.filter(s => s.endpoint !== endpoint);
+      db.push_subscriptions.push({ id, userEmail: email, endpoint, p256dh, auth, createdAt });
+      saveFallbackDB(db);
+    }
+  },
+
+  async getPushSubscriptions(userEmail: string) {
+    const email = userEmail.trim().toLowerCase();
+    if (!isFallbackMode && pool) {
+      const [rows]: any = await pool.query('SELECT * FROM push_subscriptions WHERE userEmail = ?', [email]);
+      return rows;
+    } else {
+      const db = loadFallbackDB();
+      if (!db.push_subscriptions) db.push_subscriptions = [];
+      return db.push_subscriptions.filter(s => s.userEmail === email);
+    }
+  },
+
+  async getAllPushSubscriptions() {
+    if (!isFallbackMode && pool) {
+      const [rows]: any = await pool.query('SELECT * FROM push_subscriptions');
+      return rows;
+    } else {
+      const db = loadFallbackDB();
+      if (!db.push_subscriptions) db.push_subscriptions = [];
+      return db.push_subscriptions;
+    }
+  },
+
+  async deletePushSubscription(endpoint: string) {
+    if (!isFallbackMode && pool) {
+      await pool.query('DELETE FROM push_subscriptions WHERE endpoint = ?', [endpoint]);
+    } else {
+      const db = loadFallbackDB();
+      if (!db.push_subscriptions) db.push_subscriptions = [];
+      db.push_subscriptions = db.push_subscriptions.filter(s => s.endpoint !== endpoint);
+      saveFallbackDB(db);
+    }
+  },
+
+  async getAllReadingSchedules() {
+    if (!isFallbackMode && pool) {
+      const [rows]: any = await pool.query('SELECT * FROM reading_schedules');
+      return rows.map((r: any) => ({
+        ...r,
+        activeDays: r.activeDaysJson ? JSON.parse(r.activeDaysJson) : []
+      }));
+    } else {
+      const db = loadFallbackDB();
+      return db.reading_schedules || [];
     }
   }
 };

@@ -101,6 +101,8 @@ export interface CollabDraft {
   authorEmail: string;
   authorName: string;
   chapters: Chapter[];
+  type?: 'artikel' | 'buku' | 'kitab';
+  content?: string;
   createdAt: string;
   updatedAt: string;
   status: 'open' | 'merged' | 'abandoned';
@@ -115,6 +117,8 @@ export interface CollabDiff {
   newArabic?: string;
   oldTranslation?: string;
   newTranslation?: string;
+  oldContent?: string;
+  newContent?: string;
 }
 
 export interface CollabMergeRequest {
@@ -126,6 +130,9 @@ export interface CollabMergeRequest {
   description: string;
   authorEmail: string;
   authorName: string;
+  type?: 'artikel' | 'buku' | 'kitab';
+  oldContent?: string;
+  newContent?: string;
   status: 'open' | 'review' | 'approved' | 'rejected' | 'merged' | 'closed';
   createdAt: string;
   updatedAt: string;
@@ -145,6 +152,9 @@ export interface CollabHistory {
   timestamp: string;
   previousChapters: Chapter[];
   mergedChapters: Chapter[];
+  type?: 'artikel' | 'buku' | 'kitab';
+  previousContent?: string;
+  mergedContent?: string;
 }
 
 export interface CollabPresence {

@@ -398,6 +398,7 @@ export default function CollaborativeEditor() {
 
   // Editor specific states
   const [editorChapters, setEditorChapters] = useState<Chapter[]>([]);
+  const [articleContent, setArticleContent] = useState('');
   const [activeChapterIdx, setActiveChapterIdx] = useState<number>(0);
   const [activePageNumber, setActivePageNumber] = useState<number>(1);
   const [collapsedChapters, setCollapsedChapters] = useState<Record<string, boolean>>({});
@@ -586,6 +587,15 @@ export default function CollaborativeEditor() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [activeDraft, historyStack, historyPointer]);
 
+  // Synchronize article content when active draft loads
+  useEffect(() => {
+    if (activeDraft) {
+      setArticleContent(activeDraft.content || selectedKitab?.content || '');
+    } else {
+      setArticleContent('');
+    }
+  }, [activeDraft, selectedKitab]);
+
   // Page tracking & memoization
   const activeChapterParagraphs = useMemo(() => {
     return editorChapters[activeChapterIdx]?.paragraphs || [];
@@ -644,7 +654,9 @@ export default function CollaborativeEditor() {
       title: newDraftTitle.trim(),
       authorEmail: currentUserEmail,
       authorName: currentUserName || 'Kolaborator',
-      chapters: JSON.parse(JSON.stringify(selectedKitab.chapters)), // deep copy
+      chapters: selectedKitab.chapters ? JSON.parse(JSON.stringify(selectedKitab.chapters)) : [], // deep copy
+      type: selectedKitab.type || 'kitab',
+      content: selectedKitab.content || '',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       status: 'open'
@@ -653,8 +665,9 @@ export default function CollaborativeEditor() {
     try {
       await dbService.saveCollabDraft(newDraft);
       setActiveDraft(newDraft);
-      setEditorChapters(newDraft.chapters);
-      setHistoryStack([JSON.parse(JSON.stringify(newDraft.chapters))]);
+      setEditorChapters(newDraft.chapters || []);
+      setArticleContent(newDraft.content || '');
+      setHistoryStack([JSON.parse(JSON.stringify(newDraft.chapters || []))]);
       setHistoryPointer(0);
       setActiveChapterIdx(0);
       setShowCreateDraftModal(false);
@@ -679,6 +692,28 @@ export default function CollaborativeEditor() {
         const updatedDraft: CollabDraft = {
           ...activeDraft,
           chapters: updatedChapters,
+          updatedAt: new Date().toISOString()
+        };
+        await dbService.saveCollabDraft(updatedDraft);
+        setActiveDraft(updatedDraft);
+        setSaveStatus('saved');
+      } catch (err) {
+        setSaveStatus('error');
+      }
+    }, 1500);
+  };
+
+  const saveArticleDraftToCloud = (updatedContent: string) => {
+    if (!activeDraft) return;
+
+    setSaveStatus('saving');
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+
+    saveTimeoutRef.current = setTimeout(async () => {
+      try {
+        const updatedDraft: CollabDraft = {
+          ...activeDraft,
+          content: updatedContent,
           updatedAt: new Date().toISOString()
         };
         await dbService.saveCollabDraft(updatedDraft);
@@ -1016,6 +1051,59 @@ export default function CollaborativeEditor() {
     saveDraftToCloud(newChapters);
   };
 
+  // Helper bindings for hierarchical tree rendering
+  const handleMoveNodeUp = (id: string) => moveChapterUp(id);
+  const handleMoveNodeDown = (id: string) => moveChapterDown(id);
+  const handleDeleteNode = (id: string) => {
+    const idx = editorChapters.findIndex(c => c.id === id);
+    if (idx >= 0) deleteChapter(idx);
+    setConfirmDeleteId(null);
+  };
+  const handleAddSubNode = (id: string) => {
+    if (!activeDraft) return;
+    const parentCh = editorChapters.find(c => c.id === id);
+    if (!parentCh) return;
+    const siblings = editorChapters.filter(c => c.parentId === id);
+    const subNum = siblings.length + 1;
+    const chNum = `${parentCh.number}.${subNum}`;
+
+    let lastPage = 1;
+    let maxPage = 0;
+    editorChapters.forEach(ch => {
+      ch.paragraphs?.forEach(p => {
+        const pVal = typeof p.page === 'number' ? p.page : parseInt(p.page as any) || 1;
+        if (pVal > maxPage) maxPage = pVal;
+      });
+    });
+    if (maxPage > 0) lastPage = maxPage + 1;
+
+    const newCh: Chapter = {
+      id: `ch_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+      title: `Sub-Node Baru #${subNum}`,
+      number: chNum,
+      parentId: id,
+      nodeType: "",
+      paragraphs: [
+        {
+          id: `p_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+          arabic: '',
+          translation: '',
+          explanation: '',
+          page: lastPage
+        }
+      ]
+    };
+
+    const finalChapters = recalculateHierarchicalNumbers([...editorChapters, newCh]);
+    setEditorChapters(finalChapters);
+    const newActiveIdx = finalChapters.findIndex(c => c.id === newCh.id);
+    setActiveChapterIdx(newActiveIdx >= 0 ? newActiveIdx : finalChapters.length - 1);
+    setActivePageNumber(lastPage);
+    pushToUndoStack(finalChapters);
+    saveDraftToCloud(finalChapters);
+    addToast('Sub-Bab Ditambahkan', 'Sub-Bab baru berhasil ditambahkan.', 'success');
+  };
+
   const toggleSubChapter = (idx: number) => {
     if (!activeDraft) return;
 
@@ -1184,27 +1272,27 @@ export default function CollaborativeEditor() {
     // Compute diffs
     const diffs: CollabDiff[] = [];
     const mainKitab = selectedKitab;
-    const draftChapters = activeDraft.chapters;
+    const draftChapters = activeDraft.chapters || [];
 
-    draftChapters.forEach(draftCh => {
-      const mainCh = mainKitab.chapters.find(c => c.id === draftCh.id);
-      if (!mainCh) {
-        // Entire chapter added
-        draftCh.paragraphs.forEach(p => {
-          diffs.push({
-            type: 'added',
-            chapterId: draftCh.id,
-            chapterTitle: draftCh.title,
-            paragraphId: p.id,
-            newArabic: p.arabic,
-            newTranslation: p.translation
-          });
+    if (activeDraft.type === 'artikel' || selectedKitab?.type === 'artikel') {
+      if ((mainKitab.content || '') !== (activeDraft.content || '')) {
+        diffs.push({
+          type: 'modified',
+          chapterId: '_article',
+          chapterTitle: 'Artikel',
+          paragraphId: '_article',
+          oldTranslation: mainKitab.content || '',
+          newTranslation: activeDraft.content || '',
+          oldContent: mainKitab.content || '',
+          newContent: activeDraft.content || ''
         });
-      } else {
-        // Compare paragraphs
-        draftCh.paragraphs.forEach(p => {
-          const mainP = mainCh.paragraphs.find(x => x.id === p.id);
-          if (!mainP) {
+      }
+    } else {
+      draftChapters.forEach(draftCh => {
+        const mainCh = mainKitab.chapters.find(c => c.id === draftCh.id);
+        if (!mainCh) {
+          // Entire chapter added
+          (draftCh.paragraphs || []).forEach(p => {
             diffs.push({
               type: 'added',
               chapterId: draftCh.id,
@@ -1213,36 +1301,51 @@ export default function CollaborativeEditor() {
               newArabic: p.arabic,
               newTranslation: p.translation
             });
-          } else if (mainP.arabic !== p.arabic || mainP.translation !== p.translation) {
-            diffs.push({
-              type: 'modified',
-              chapterId: draftCh.id,
-              chapterTitle: draftCh.title,
-              paragraphId: p.id,
-              oldArabic: mainP.arabic,
-              newArabic: p.arabic,
-              oldTranslation: mainP.translation,
-              newTranslation: p.translation
-            });
-          }
-        });
+          });
+        } else {
+          // Compare paragraphs
+          (draftCh.paragraphs || []).forEach(p => {
+            const mainP = (mainCh.paragraphs || []).find(x => x.id === p.id);
+            if (!mainP) {
+              diffs.push({
+                type: 'added',
+                chapterId: draftCh.id,
+                chapterTitle: draftCh.title,
+                paragraphId: p.id,
+                newArabic: p.arabic,
+                newTranslation: p.translation
+              });
+            } else if (mainP.arabic !== p.arabic || mainP.translation !== p.translation) {
+              diffs.push({
+                type: 'modified',
+                chapterId: draftCh.id,
+                chapterTitle: draftCh.title,
+                paragraphId: p.id,
+                oldArabic: mainP.arabic,
+                newArabic: p.arabic,
+                oldTranslation: mainP.translation,
+                newTranslation: p.translation
+              });
+            }
+          });
 
-        // Check for deleted paragraphs
-        mainCh.paragraphs.forEach(mainP => {
-          const draftP = draftCh.paragraphs.find(x => x.id === mainP.id);
-          if (!draftP) {
-            diffs.push({
-              type: 'deleted',
-              chapterId: draftCh.id,
-              chapterTitle: draftCh.title,
-              paragraphId: mainP.id,
-              oldArabic: mainP.arabic,
-              oldTranslation: mainP.translation
-            });
-          }
-        });
-      }
-    });
+          // Check for deleted paragraphs
+          (mainCh.paragraphs || []).forEach(mainP => {
+            const draftP = (draftCh.paragraphs || []).find(x => x.id === mainP.id);
+            if (!draftP) {
+              diffs.push({
+                type: 'deleted',
+                chapterId: draftCh.id,
+                chapterTitle: draftCh.title,
+                paragraphId: mainP.id,
+                oldArabic: mainP.arabic,
+                oldTranslation: mainP.translation
+              });
+            }
+          });
+        }
+      });
+    }
 
     const mrId = `mr_${Date.now()}`;
     const newMR: CollabMergeRequest = {
@@ -1254,6 +1357,9 @@ export default function CollaborativeEditor() {
       description: mrDescription.trim(),
       authorEmail: currentUserEmail,
       authorName: currentUserName || 'Kolaborator',
+      type: activeDraft.type || selectedKitab?.type || 'kitab',
+      oldContent: (activeDraft.type === 'artikel' || selectedKitab?.type === 'artikel') ? (selectedKitab.content || '') : '',
+      newContent: (activeDraft.type === 'artikel' || selectedKitab?.type === 'artikel') ? (activeDraft.content || '') : '',
       status: 'open',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -1329,6 +1435,8 @@ export default function CollaborativeEditor() {
       return;
     }
 
+    const isArticle = draft.type === 'artikel' || selectedKitab.type === 'artikel' || activeMR.type === 'artikel';
+
     try {
       // Create rollback checkpoint
       const historyId = `hist_${Date.now()}`;
@@ -1342,15 +1450,22 @@ export default function CollaborativeEditor() {
         userName: activeMR.authorName,
         message: commitMessage,
         timestamp: new Date().toISOString(),
-        previousChapters: JSON.parse(JSON.stringify(selectedKitab.chapters)),
-        mergedChapters: JSON.parse(JSON.stringify(draft.chapters))
+        type: draft.type || 'kitab',
+        previousChapters: isArticle ? [] : JSON.parse(JSON.stringify(selectedKitab.chapters || [])),
+        mergedChapters: isArticle ? [] : JSON.parse(JSON.stringify(draft.chapters || [])),
+        previousContent: isArticle ? (selectedKitab.content || '') : '',
+        mergedContent: isArticle ? (draft.content || '') : ''
       };
 
       // 1. Save history commit
       await dbService.saveCollabHistory(collabHist);
 
       // 2. Update Custom Kitab Main Branch
-      await dbService.updateCustomKitabChapters(selectedKitab.id, draft.chapters);
+      if (isArticle) {
+        await dbService.updateCustomKitabContent(selectedKitab.id, draft.content || '');
+      } else {
+        await dbService.updateCustomKitabChapters(selectedKitab.id, draft.chapters || []);
+      }
 
       // 3. Mark Merge Request as MERGED
       const updatedMR: CollabMergeRequest = {
@@ -1391,51 +1506,100 @@ export default function CollaborativeEditor() {
       `Apakah Anda yakin ingin mengembalikan karya tulis "${selectedKitab.title}" ke versi sebelum commit "${history.message}"?`,
       async () => {
         try {
-          const targetChapters = history.previousChapters;
-          if (!targetChapters || targetChapters.length === 0) {
-            addToast('Gagal', 'Data bab versi sebelumnya tidak ditemukan.', 'warning');
-            return;
-          }
+          const isArticle = history.type === 'artikel' || selectedKitab.type === 'artikel';
+          
+          if (isArticle) {
+            const targetContent = history.previousContent || '';
 
-          // 1. Apply old chapters back to Main Custom Kitab
-          await dbService.updateCustomKitabChapters(selectedKitab.id, targetChapters);
+            // 1. Apply old content back to Main Custom Kitab
+            await dbService.updateCustomKitabContent(selectedKitab.id, targetContent);
 
-          // 2. Append new rollback commit to history
-          const rollbackHistId = `hist_rb_${Date.now()}`;
-          const rollbackHist: CollabHistory = {
-            id: rollbackHistId,
-            kitabId: selectedKitab.id,
-            kitabTitle: selectedKitab.title,
-            userEmail: currentUserEmail,
-            userName: currentUserName || 'Admin',
-            message: `🔄 ROLLBACK: Mengembalikan perubahan dari "${history.message}"`,
-            timestamp: new Date().toISOString(),
-            previousChapters: JSON.parse(JSON.stringify(selectedKitab.chapters)),
-            mergedChapters: JSON.parse(JSON.stringify(targetChapters))
-          };
-
-          await dbService.saveCollabHistory(rollbackHist);
-
-          // 3. Update local selectedKitab state instantly
-          const updatedKitab = {
-            ...selectedKitab,
-            chapters: JSON.parse(JSON.stringify(targetChapters))
-          };
-          setSelectedKitab(updatedKitab);
-
-          // 4. Synchronize current editor with rolled-back state
-          setEditorChapters(targetChapters);
-          pushToUndoStack(targetChapters);
-
-          // 5. If we are currently editing an active draft, sync the activeDraft chapters & database too!
-          if (activeDraft) {
-            const updatedDraft: CollabDraft = {
-              ...activeDraft,
-              chapters: JSON.parse(JSON.stringify(targetChapters)),
-              updatedAt: new Date().toISOString()
+            // 2. Append new rollback commit to history
+            const rollbackHistId = `hist_rb_${Date.now()}`;
+            const rollbackHist: CollabHistory = {
+              id: rollbackHistId,
+              kitabId: selectedKitab.id,
+              kitabTitle: selectedKitab.title,
+              userEmail: currentUserEmail,
+              userName: currentUserName || 'Admin',
+              message: `🔄 ROLLBACK: Mengembalikan perubahan dari "${history.message}"`,
+              timestamp: new Date().toISOString(),
+              type: 'artikel',
+              previousChapters: [],
+              mergedChapters: [],
+              previousContent: selectedKitab.content || '',
+              mergedContent: targetContent
             };
-            await dbService.saveCollabDraft(updatedDraft);
-            setActiveDraft(updatedDraft);
+
+            await dbService.saveCollabHistory(rollbackHist);
+
+            // 3. Update local selectedKitab state instantly
+            const updatedKitab = {
+              ...selectedKitab,
+              content: targetContent
+            };
+            setSelectedKitab(updatedKitab);
+
+            // 4. Synchronize current editor with rolled-back state
+            setArticleContent(targetContent);
+
+            // 5. If we are currently editing an active draft, sync the activeDraft chapters & database too!
+            if (activeDraft) {
+              const updatedDraft: CollabDraft = {
+                ...activeDraft,
+                content: targetContent,
+                updatedAt: new Date().toISOString()
+              };
+              await dbService.saveCollabDraft(updatedDraft);
+              setActiveDraft(updatedDraft);
+            }
+          } else {
+            const targetChapters = history.previousChapters;
+            if (!targetChapters || targetChapters.length === 0) {
+              addToast('Gagal', 'Data bab versi sebelumnya tidak ditemukan.', 'warning');
+              return;
+            }
+
+            // 1. Apply old chapters back to Main Custom Kitab
+            await dbService.updateCustomKitabChapters(selectedKitab.id, targetChapters);
+
+            // 2. Append new rollback commit to history
+            const rollbackHistId = `hist_rb_${Date.now()}`;
+            const rollbackHist: CollabHistory = {
+              id: rollbackHistId,
+              kitabId: selectedKitab.id,
+              kitabTitle: selectedKitab.title,
+              userEmail: currentUserEmail,
+              userName: currentUserName || 'Admin',
+              message: `🔄 ROLLBACK: Mengembalikan perubahan dari "${history.message}"`,
+              timestamp: new Date().toISOString(),
+              previousChapters: JSON.parse(JSON.stringify(selectedKitab.chapters || [])),
+              mergedChapters: JSON.parse(JSON.stringify(targetChapters))
+            };
+
+            await dbService.saveCollabHistory(rollbackHist);
+
+            // 3. Update local selectedKitab state instantly
+            const updatedKitab = {
+              ...selectedKitab,
+              chapters: JSON.parse(JSON.stringify(targetChapters))
+            };
+            setSelectedKitab(updatedKitab);
+
+            // 4. Synchronize current editor with rolled-back state
+            setEditorChapters(targetChapters);
+            pushToUndoStack(targetChapters);
+
+            // 5. If we are currently editing an active draft, sync the activeDraft chapters & database too!
+            if (activeDraft) {
+              const updatedDraft: CollabDraft = {
+                ...activeDraft,
+                chapters: JSON.parse(JSON.stringify(targetChapters)),
+                updatedAt: new Date().toISOString()
+              };
+              await dbService.saveCollabDraft(updatedDraft);
+              setActiveDraft(updatedDraft);
+            }
           }
 
           setActivePageNumber(1);
@@ -1655,53 +1819,64 @@ export default function CollaborativeEditor() {
             ))}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {/* Today's Activity Timeline / Guide */}
-            <div className="md:col-span-2 bg-white dark:bg-[#181814] p-5 rounded-xl border border-[#E5E1D8] dark:border-[#3A3A30] space-y-4">
-              <h3 className="text-sm font-bold text-stone-800 dark:text-[#E5E1D8] flex items-center gap-2 pb-2 border-b border-stone-100 dark:border-stone-800">
-                <Activity className="w-4 h-4 text-[#5A5A40]" /> Panduan Alur Kolaborasi Khazanah Digital
-              </h3>
-              
-              <div className="space-y-4 text-xs text-stone-600 dark:text-stone-300">
-                <div className="relative pl-6 pb-2 border-l border-stone-200 dark:border-stone-800">
-                  <div className="absolute -left-[5px] top-1 w-2.5 h-2.5 rounded-full bg-blue-500" />
-                  <strong className="text-stone-800 dark:text-white">1. Pilih Karya & Buat Musawwadah (Rancangan)</strong>
-                  <p className="mt-1">Pilih karya tulis yang ingin Anda sunting pada tab 'Majelis Karya'. Buat Musawwadah kerja pribadi Anda untuk mulai menulis secara aman tanpa memengaruhi naskah induk utama.</p>
-                </div>
-                
-                <div className="relative pl-6 pb-2 border-l border-stone-200 dark:border-stone-800">
-                  <div className="absolute -left-[5px] top-1 w-2.5 h-2.5 rounded-full bg-amber-500" />
-                  <strong className="text-stone-800 dark:text-white">2. Sunting & Auto-Save Real-time</strong>
-                  <p className="mt-1">Gunakan editor Arab khusus kami (mendukung Harakat, orientasi Kanan-ke-Kiri/RTL, serta riwayat undo/redo). Tulisan Anda akan otomatis tersimpan di cloud secara berkala.</p>
-                </div>
-
-                <div className="relative pl-6 pb-2 border-l border-stone-200 dark:border-stone-800">
-                  <div className="absolute -left-[5px] top-1 w-2.5 h-2.5 rounded-full bg-purple-500" />
-                  <strong className="text-stone-800 dark:text-white">3. Ajukan Usulan Tashih (Penyatuan)</strong>
-                  <p className="mt-1">Setelah selesai menulis atau menyempurnakan naskah, ajukan Usulan Tashih (Penyatuan Teks). Sistem kami akan melacak perbedaan kalimat (Muqabalah) kata demi kata secara otomatis.</p>
-                </div>
-
-                <div className="relative pl-6">
-                  <div className="absolute -left-[5px] top-1 w-2.5 h-2.5 rounded-full bg-emerald-500" />
-                  <strong className="text-stone-800 dark:text-white">4. Pemeriksaan (Tashih) & Penggabungan Resmi</strong>
-                  <p className="mt-1">Para Mushahhih atau Mudir akan meneliti naskah Anda (Muqabalah / Perbandingan Teks), memberikan ulasan/catatan, menyetujui, dan akhirnya menggabungkan perubahan Anda ke naskah induk utama.</p>
-                </div>
-              </div>
-            </div>
-
+          <div className="space-y-6">
              {/* Simulated Live Notifications or Statuses */}
-            <div className="bg-[#F9F6F0] dark:bg-[#121210] p-5 rounded-xl border border-[#E5E1D8] dark:border-[#3A3A30] space-y-4">
+            <div className="bg-[#F9F6F0] dark:bg-[#121210] p-5 rounded-xl border border-[#E5E1D8] dark:border-[#3A3A30] space-y-4 animate-fade-in">
               <h3 className="text-sm font-bold text-[#5A5A40] dark:text-[#E5E1D8] flex items-center gap-2 pb-2 border-b border-stone-200 dark:border-stone-800">
                 <Info className="w-4 h-4" /> Informasi Halaqah
               </h3>
-              <div className="space-y-3.5 text-xs">
-                <div className="bg-white dark:bg-[#181814] p-3 rounded-lg border border-stone-200 dark:border-stone-800 space-y-1">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+                <div className="bg-white dark:bg-[#181814] p-4 rounded-lg border border-stone-200 dark:border-stone-800 space-y-1">
                   <div className="font-bold text-stone-700 dark:text-stone-300">Statistik Khidmat Anda:</div>
                   <div className="text-stone-500">Musawwadah aktif: <strong>{stats.myDrafts} buah</strong></div>
                   <div className="text-stone-500">Peran: <strong>Khadim Karya (Aktif)</strong></div>
                 </div>
 
-                <div className="bg-white dark:bg-[#181814] p-3 rounded-lg border border-stone-200 dark:border-stone-800 space-y-2">
+                {/* My Active Drafts Section */}
+                <div className="bg-white dark:bg-[#181814] p-4 rounded-lg border border-stone-200 dark:border-stone-800 space-y-2.5">
+                  <div className="font-bold text-stone-700 dark:text-stone-300 flex items-center gap-1.5 pb-1.5 border-b border-stone-100 dark:border-stone-800">
+                    <GitBranch className="w-3.5 h-3.5 text-[#5A5A40]" /> Musawwadah Kerja Saya ({allDrafts.filter(d => d.authorEmail === currentUserEmail).length})
+                  </div>
+                  {allDrafts.filter(d => d.authorEmail === currentUserEmail).length === 0 ? (
+                    <p className="text-[10px] text-stone-400 italic">Belum ada musawwadah yang aktif. Pilih karya di tab "Majelis Karya" untuk mulai menulis.</p>
+                  ) : (
+                    <div className="space-y-2 max-h-[120px] overflow-y-auto pr-1">
+                      {allDrafts.filter(d => d.authorEmail === currentUserEmail).map(draft => {
+                        const associatedKitab = customKitabs.find(k => k.id === draft.kitabId);
+                        const displayType = draft.type || associatedKitab?.type || 'kitab';
+                        return (
+                          <div key={draft.id} className="flex items-center justify-between p-2 bg-stone-50 dark:bg-stone-900/40 rounded-lg border border-stone-100 dark:border-stone-800 text-[11px] gap-2">
+                            <div className="min-w-0 flex-1 space-y-0.5">
+                              <p className="font-bold text-stone-800 dark:text-stone-100 truncate">{draft.title}</p>
+                              <p className="text-[9px] text-stone-500 truncate">Karya: {draft.kitabTitle} <span className="capitalize">({displayType})</span></p>
+                            </div>
+                            <button
+                              onClick={() => {
+                                const kitab = customKitabs.find(k => k.id === draft.kitabId);
+                                if (kitab) {
+                                  setSelectedKitab(kitab);
+                                  setActiveDraft(draft);
+                                  setEditorChapters(draft.chapters || []);
+                                  setArticleContent(draft.content || '');
+                                  setHistoryStack([JSON.parse(JSON.stringify(draft.chapters || []))]);
+                                  setHistoryPointer(0);
+                                  addToast('Memuat Musawwadah', `Melanjutkan musawwadah kerja: "${draft.title}"`, 'success');
+                                } else {
+                                  addToast('Karya Tidak Ditemukan', 'Naskah utama karya ini tidak lagi tersedia.', 'warning');
+                                }
+                              }}
+                              className="px-2 py-0.5 bg-[#5A5A40] hover:bg-[#484833] text-white font-bold text-[9px] rounded cursor-pointer transition-colors"
+                            >
+                              Sunting
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-white dark:bg-[#181814] p-4 rounded-lg border border-stone-200 dark:border-stone-800 space-y-2">
                   <div className="font-bold text-stone-700 dark:text-stone-300">Kabar Halaqah & Sistem:</div>
                   <div className="flex items-start gap-1.5 text-[11px] text-stone-600 dark:text-stone-400">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mt-1.5" />
@@ -1711,6 +1886,39 @@ export default function CollaborativeEditor() {
                     <span className="w-1.5 h-1.5 rounded-full bg-purple-500 mt-1.5" />
                     <span>Usulan Tashih siap diulas langsung oleh para Mushahhih.</span>
                   </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Today's Activity Timeline / Guide */}
+            <div className="bg-white dark:bg-[#181814] p-5 rounded-xl border border-[#E5E1D8] dark:border-[#3A3A30] space-y-4 animate-fade-in">
+              <h3 className="text-sm font-bold text-stone-800 dark:text-[#E5E1D8] flex items-center gap-2 pb-2 border-b border-stone-100 dark:border-stone-800">
+                <Activity className="w-4 h-4 text-[#5A5A40]" /> Panduan Alur Kolaborasi Khazanah Digital
+              </h3>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 text-xs text-stone-600 dark:text-stone-300">
+                <div className="relative pl-6 pb-2">
+                  <div className="absolute left-0 top-1 w-2.5 h-2.5 rounded-full bg-blue-500" />
+                  <strong className="text-stone-800 dark:text-white block mb-1">1. Pilih Karya & Buat Musawwadah</strong>
+                  <p className="leading-relaxed">Pilih karya tulis yang ingin Anda sunting pada tab 'Majelis Karya'. Buat Musawwadah kerja pribadi Anda untuk mulai menulis secara aman tanpa memengaruhi naskah induk utama.</p>
+                </div>
+                
+                <div className="relative pl-6 pb-2">
+                  <div className="absolute left-0 top-1 w-2.5 h-2.5 rounded-full bg-amber-500" />
+                  <strong className="text-stone-800 dark:text-white block mb-1">2. Sunting & Auto-Save Real-time</strong>
+                  <p className="leading-relaxed">Gunakan editor Arab khusus kami (mendukung Harakat, orientasi Kanan-ke-Kiri/RTL, serta riwayat undo/redo). Tulisan Anda akan otomatis tersimpan di cloud secara berkala.</p>
+                </div>
+
+                <div className="relative pl-6 pb-2">
+                  <div className="absolute left-0 top-1 w-2.5 h-2.5 rounded-full bg-purple-500" />
+                  <strong className="text-stone-800 dark:text-white block mb-1">3. Ajukan Usulan Tashih</strong>
+                  <p className="leading-relaxed">Setelah selesai menulis atau menyempurnakan naskah, ajukan Usulan Tashih (Penyatuan Teks). Sistem kami akan melacak perbedaan kalimat (Muqabalah) kata demi kata secara otomatis.</p>
+                </div>
+
+                <div className="relative pl-6 pb-2">
+                  <div className="absolute left-0 top-1 w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                  <strong className="text-stone-800 dark:text-white block mb-1">4. Pemeriksaan & Penggabungan</strong>
+                  <p className="leading-relaxed">Para Mushahhih atau Mudir akan meneliti naskah Anda (Muqabalah / Perbandingan Teks), memberikan ulasan/catatan, menyetujui, dan akhirnya menggabungkan perubahan Anda ke naskah induk utama.</p>
                 </div>
               </div>
             </div>
@@ -1754,8 +1962,8 @@ export default function CollaborativeEditor() {
                         <h4 className="font-serif font-bold text-stone-800 dark:text-[#E5E1D8] text-sm">
                           {kitab.title}
                         </h4>
-                        <span className="text-[10px] font-medium bg-[#5A5A40]/10 text-[#5A5A40] px-1.5 py-0.5 rounded-md">
-                          {kitab.chapters.length} Bab
+                        <span className="text-[10px] font-medium bg-[#5A5A40]/10 text-[#5A5A40] px-1.5 py-0.5 rounded-md capitalize">
+                          {kitab.type || 'kitab'} {kitab.type !== 'artikel' && `(${kitab.chapters?.length || 0} Bab)`}
                         </span>
                       </div>
                       <p className="text-xs text-stone-500 dark:text-stone-400 italic">
@@ -1785,8 +1993,9 @@ export default function CollaborativeEditor() {
                           const existingDraft = allDrafts.find(d => d.kitabId === kitab.id && d.authorEmail === currentUserEmail && d.status === 'open');
                           if (existingDraft) {
                             setActiveDraft(existingDraft);
-                            setEditorChapters(existingDraft.chapters);
-                            setHistoryStack([JSON.parse(JSON.stringify(existingDraft.chapters))]);
+                            setEditorChapters(existingDraft.chapters || []);
+                            setArticleContent(existingDraft.content || '');
+                            setHistoryStack([JSON.parse(JSON.stringify(existingDraft.chapters || []))]);
                             setHistoryPointer(0);
                             addToast('Memuat Musawwadah', `Melanjutkan musawwadah kerja: "${existingDraft.title}"`, 'success');
                           } else {
@@ -2333,286 +2542,246 @@ export default function CollaborativeEditor() {
 
             {/* Right Main Column: Canvas Editor matches KitabWriter mode edit */}
             <div className="lg:col-span-2 space-y-6">
+              {(activeDraft.type === 'artikel' || selectedKitab?.type === 'artikel') ? (
+                /* Article Collaborative Editor Workspace */
+                <div className="bg-[#F9F6F0] dark:bg-[#181814] border border-[#E5E1D8] dark:border-[#3A3A30] rounded-xl p-5 shadow-none space-y-5 animate-fade-in">
+                  <div className="border-b border-[#E5E1D8] dark:border-[#3A3A30] pb-4 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <FileText className="w-5 h-5 text-[#5A5A40] dark:text-[#E5E1D8]" />
+                        <h4 className="font-serif font-bold text-[#5A5A40] dark:text-[#E5E1D8] text-sm">
+                          Halaman Editor Artikel (Kolaboratif)
+                        </h4>
+                      </div>
+                      <span className="text-xs font-mono bg-[#5A5A40]/10 text-[#5A5A40] dark:text-[#E5E1D8] px-2.5 py-1 rounded-md">
+                        {myRole === 'reader' ? 'Mode Membaca' : 'Mode Mengedit'}
+                      </span>
+                    </div>
+                    <h2 className="font-serif font-bold text-lg text-[#333333] dark:text-[#E5E1D8] pt-1">
+                      {activeDraft.kitabTitle}
+                    </h2>
+                  </div>
 
-              {/* 1. Struktur Bab Kitab (Tab navigation) */}
-              <div className="bg-[#F9F6F0] dark:bg-[#181814] border border-[#E5E1D8] dark:border-[#3A3A30] rounded-xl p-4 shadow-none space-y-3">
-                <div className="flex items-center justify-between">
+                  <div className="space-y-2">
+                    <label htmlFor="collab-article-editor-body" className="block text-xs font-bold text-[#5A5A40] dark:text-[#E5E1D8]">
+                      Konten Lengkap Artikel / Blog *
+                    </label>
+                    <RichTextEditor
+                      id="collab-article-editor-body"
+                      placeholder="Tulis draf lengkap artikel, pemikiran, blog, atau opini keagamaan bersama-sama di sini..."
+                      value={articleContent}
+                      onChange={(val) => {
+                        if (myRole !== 'reader') {
+                          setArticleContent(val);
+                          saveArticleDraftToCloud(val);
+                        }
+                      }}
+                      className="min-h-[450px] text-sm"
+                      disabled={myRole === 'reader'}
+                    />
+                  </div>
+
+                  {/* Action Buttons (Sama persis seperti KitabWriter) */}
+                  <div className="flex items-center justify-between pt-4 border-t border-[#E5E1D8] dark:border-[#3A3A30]">
+                    <p className="text-[10px] text-[#999488] italic">
+                      {myRole === 'reader' ? '* Mode membaca saja. Anda tidak dapat menyunting artikel ini.' : '* Perubahan disinkronkan otomatis. Klik Simpan untuk memastikan.'}
+                    </p>
+                    {myRole !== 'reader' && (
+                      <button
+                        id="btn-collab-save-article"
+                        type="button"
+                        onClick={async () => {
+                          if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+                          setSaveStatus('saving');
+                          try {
+                            const updatedDraft: CollabDraft = {
+                              ...activeDraft,
+                              content: articleContent,
+                              updatedAt: new Date().toISOString()
+                            };
+                            await dbService.saveCollabDraft(updatedDraft);
+                            setActiveDraft(updatedDraft);
+                            setSaveStatus('saved');
+                            addToast('Naskah Disimpan', 'Draf artikel berhasil disimpan di cloud.', 'success');
+                          } catch (err) {
+                            setSaveStatus('error');
+                            addToast('Gagal Menyimpan', 'Terjadi kesalahan saat menyimpan draf.', 'warning');
+                          }
+                        }}
+                        className="flex items-center justify-center gap-1.5 px-6 py-2.5 bg-[#5A5A40] hover:bg-[#454530] text-white font-bold text-xs rounded-lg shadow-none focus:outline-none transition-all cursor-pointer"
+                      >
+                        <Save className="w-4 h-4" /> Simpan
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* 1. Struktur Hierarki Karya (Tanpa Batas) */}
+              <div className="bg-[#F9F6F0] dark:bg-[#181814] border border-[#E5E1D8] dark:border-[#3A3A30] rounded-xl p-4 shadow-none">
+                <div className="flex items-center justify-between mb-3">
                   <h4 className="font-serif font-bold text-[#5A5A40] dark:text-[#E5E1D8] text-xs flex items-center gap-1.5">
-                    <BookOpen className="w-4 h-4 text-[#5A5A40] dark:text-[#E5E1D8]" /> 1. Silsilah / Struktur Bab Karya
+                    <Layers className="w-4 h-4 text-[#5A5A40] dark:text-[#E5E1D8]" /> 1. Struktur Hierarki Karya (Tanpa Batas)
                   </h4>
                   {myRole !== 'reader' && (
                     <div className="flex items-center gap-3">
-                      <button
-                        id="btn-writer-add-sub-chapter"
-                        type="button"
-                        onClick={addSubChapter}
-                        className="flex items-center gap-1 text-[11px] font-bold text-[#5A5A40] hover:text-[#454530] dark:text-[#E5E1D8] focus:outline-none cursor-pointer"
-                      >
-                        + Tambah Sub Bab
-                      </button>
                       <button
                         id="btn-writer-add-chapter"
                         type="button"
                         onClick={addChapter}
                         className="flex items-center gap-1 text-[11px] font-bold text-[#5A5A40] hover:text-[#454530] dark:text-[#E5E1D8] focus:outline-none cursor-pointer"
                       >
-                        + Tambah Bab Baru
+                        + Node
+                      </button>
+                      <button
+                        id="btn-writer-recalc-hierarchy"
+                        type="button"
+                        onClick={() => {
+                          const sorted = recalculateHierarchicalNumbers(editorChapters);
+                          setEditorChapters(sorted);
+                          pushToUndoStack(sorted);
+                          saveDraftToCloud(sorted);
+                          addToast('Rapikan Nomor', 'Nomor segmen hierarki berhasil dirapikan otomatis.', 'success');
+                        }}
+                        className="flex items-center gap-1 text-[11px] font-bold text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 focus:outline-none cursor-pointer"
+                        title="Urutkan & hitung ulang nomor segmen hierarki otomatis"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" /> Rapikan Nomor
                       </button>
                     </div>
                   )}
                 </div>
 
-                <div 
-                  id="writer-chapters-tree-container" 
-                  className="border border-[#E5E1D8] dark:border-[#3A3A30] rounded-xl p-3 bg-[#FDFBF7] dark:bg-[#121210] space-y-2 max-h-[350px] overflow-y-auto relative min-h-[150px]"
-                  onDragOver={(e) => {
-                    if (myRole !== 'reader') e.preventDefault();
-                  }}
-                  onDrop={(e) => {
-                    if (myRole !== 'reader') {
-                      e.preventDefault();
-                      const draggedId = e.dataTransfer.getData('text/plain');
-                      if (draggedId) {
-                        updateChapterParent(draggedId, undefined);
-                      }
-                    }
-                  }}
-                >
-                  {buildTree(editorChapters).map(function renderWriterNode(node: TreeNode) {
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[350px] overflow-y-auto p-1 bg-[#F4F1EA] dark:bg-stone-900/40 rounded-xl border border-[#E5E1D8] dark:border-[#3A3A30]">
+                  {buildTree(editorChapters).map(function renderNode(node: TreeNode) {
                     const ch = node.chapter;
                     const idxInChapters = editorChapters.findIndex(c => c.id === ch.id);
                     const isActive = idxInChapters === activeChapterIdx;
-                    const hasChildren = node.children.length > 0;
                     const isCollapsed = collapsedChapters[ch.id];
-
-                    // Allowed node label presets
-                    const presets = ['Bab', 'Fasal', 'Muqaddimah', 'Tanbih', 'Faidah', 'Masalah', 'Sub Bab', 'Artikel'];
+                    const siblings = editorChapters.filter(c => c.parentId === ch.parentId);
+                    const isFirstSibling = siblings[0]?.id === ch.id;
+                    const isLastSibling = siblings[siblings.length - 1]?.id === ch.id;
+                    const childNodes = editorChapters.filter(c => c.parentId === ch.id);
+                    const hasChildren = childNodes.length > 0;
 
                     return (
                       <div 
                         key={ch.id} 
-                        className={`space-y-1 rounded-lg transition-all border border-transparent ${isActive ? 'bg-amber-500/5 dark:bg-[#5A5A40]/10 border-[#5A5A40]/20 p-1.5' : 'p-1 hover:border-dashed hover:border-[#5A5A40]/30'}`}
-                        onDragOver={(e) => {
-                          if (myRole !== 'reader') {
-                            e.preventDefault();
-                            e.stopPropagation();
-                          }
-                        }}
-                        onDrop={(e) => {
-                          if (myRole !== 'reader') {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            const draggedId = e.dataTransfer.getData('text/plain');
-                            if (draggedId && draggedId !== ch.id) {
-                              updateChapterParent(draggedId, ch.id);
-                            }
-                          }
-                        }}
+                        className={`p-2.5 rounded-lg border transition-all relative ${
+                          isActive 
+                            ? 'bg-[#5A5A40] border-[#5A5A40] text-white' 
+                            : 'bg-white dark:bg-stone-950/60 border-[#E5E1D8] dark:border-[#3A3A30] text-[#777266] dark:text-[#A8A890]'
+                        }`}
+                        style={{ marginLeft: `${node.depth * 14}px` }}
                       >
-                        <div 
-                          className="flex flex-col md:flex-row md:items-center justify-between gap-2 w-full group"
-                          style={{ paddingLeft: `${node.depth * 16}px` }}
-                        >
-                          <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                            {/* Drag Handle Indicator */}
-                            {myRole !== 'reader' && (
-                              <div 
-                                className="text-[#999488] dark:text-[#666155] cursor-grab active:cursor-grabbing px-1.5 py-0.5 bg-[#F4F1EA] dark:bg-stone-800 hover:bg-[#E5E1D8] hover:text-[#5A5A40] rounded font-mono text-[10px] select-none flex items-center justify-center min-w-[18px] h-[18px]" 
-                                title="Seret ke Bab lain untuk menjadikannya Sub-Bab, atau taruh di ruang kosong untuk menjadikannya Bab Utama (Root)"
-                                draggable
-                                onDragStart={(e) => {
-                                  e.stopPropagation();
-                                  e.dataTransfer.setData('text/plain', ch.id);
-                                }}
-                              >
-                                ⋮⋮
-                              </div>
-                            )}
-
-                            {/* Collapse Button */}
-                            {hasChildren ? (
+                        <div className="flex items-center justify-between gap-1.5">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            {hasChildren && (
                               <button
                                 type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setCollapsedChapters(prev => ({ ...prev, [ch.id]: !prev[ch.id] }));
-                                }}
-                                className="p-1 hover:bg-[#E5E1D8] dark:hover:bg-stone-800 rounded text-[#777266] dark:text-[#A8A890] transition-colors cursor-pointer"
+                                onClick={() => setCollapsedChapters(prev => ({ ...prev, [ch.id]: !prev[ch.id] }))}
+                                className={`p-0.5 rounded transition-colors ${isActive ? 'hover:bg-white/20' : 'hover:bg-[#E5E1D8]'}`}
                               >
                                 {isCollapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                               </button>
-                            ) : (
-                              <div className="w-5.5 flex-shrink-0" />
                             )}
-
-                            {/* Label Type Selector Dropdown or Custom Text Input */}
-                            {myRole !== 'reader' ? (
-                              customNodes[ch.id] || (ch.nodeType && !presets.includes(ch.nodeType)) ? (
-                                <div className="flex items-center gap-1">
-                                  <input
-                                    type="text"
-                                    placeholder="Kustom..."
-                                    value={ch.nodeType || ''}
-                                    onChange={(e) => updateNodeType(ch.id, e.target.value)}
-                                    className="bg-[#FDFBF7] dark:bg-stone-950 border border-[#E5E1D8] dark:border-[#3A3A30] text-[10px] font-mono rounded px-1.5 py-0.5 text-[#5A5A40] dark:text-[#E5E1D8] focus:outline-none w-16"
-                                    autoFocus
-                                  />
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      updateNodeType(ch.id, 'Bab');
-                                      setCustomNodes(prev => ({ ...prev, [ch.id]: false }));
-                                    }}
-                                    className="text-[9px] px-1 py-0.5 rounded bg-stone-100 hover:bg-stone-200 dark:bg-stone-800 dark:hover:bg-stone-700 text-[#777266] dark:text-[#A8A890] font-mono cursor-pointer"
-                                    title="Kembali ke Pilihan Preset"
-                                  >
-                                    Preset
-                                  </button>
-                                </div>
-                              ) : (
-                                <select
-                                  value={ch.nodeType}
-                                  onChange={(e) => {
-                                    const val = e.target.value;
-                                    if (val === '__CUSTOM__') {
-                                      setCustomNodes(prev => ({ ...prev, [ch.id]: true }));
-                                      updateNodeType(ch.id, 'Kustom');
-                                    } else {
-                                      updateNodeType(ch.id, val);
-                                    }
-                                  }}
-                                  className="bg-[#FDFBF7] dark:bg-stone-950 border border-[#E5E1D8] dark:border-[#3A3A30] text-[10px] font-mono rounded px-1 py-0.5 text-[#5A5A40] dark:text-[#E5E1D8] focus:outline-none cursor-pointer"
-                                >
-                                  {presets.map(p => <option key={p} value={p}>{p}</option>)}
-                                  <option value="__CUSTOM__">🎨 Kustom...</option>
-                                </select>
-                              )
-                            ) : (
-                              <span className="text-[10px] font-mono text-[#5A5A40] dark:text-[#E5E1D8] bg-[#F4F1EA] dark:bg-stone-800 px-1 py-0.5 rounded">
-                                {ch.nodeType}
-                              </span>
-                            )}
-
-                            <span className="text-[10px] text-stone-400 font-mono">#{ch.number}</span>
-
-                            {/* Title button */}
                             <button
+                              id={`chapter-select-btn-${ch.id}`}
                               type="button"
                               onClick={() => {
-                                setActiveChapterIdx(idxInChapters);
-                                setEditingParagraphId(null);
+                                const idx = editorChapters.findIndex(c => c.id === ch.id);
+                                if (idx >= 0) {
+                                  setActiveChapterIdx(idx);
+                                  setEditingParagraphId(null);
+                                  const chParagraphs = editorChapters[idx]?.paragraphs || [];
+                                  if (chParagraphs.length > 0) {
+                                    setActivePageNumber(chParagraphs[0].page || 1);
+                                  } else {
+                                    setActivePageNumber(1);
+                                  }
+                                }
                               }}
-                              className={`truncate text-left px-2 py-1 rounded text-xs font-bold transition-all flex-1 cursor-pointer ${
-                                isActive
-                                  ? 'bg-[#5A5A40] border-[#5A5A40] text-white shadow-none'
-                                  : 'text-[#333333] dark:text-[#E5E1D8] hover:bg-[#E5E1D8] dark:hover:bg-[#121210]'
-                              }`}
+                              className="text-left font-serif font-bold text-xs truncate cursor-pointer flex items-center"
                             >
-                              {ch.title || '(Teks Judul Kosong)'}
+                              <span className="font-mono text-[10px] opacity-75 mr-1 bg-stone-500/10 dark:bg-stone-500/20 px-1 py-0.5 rounded">
+                                {ch.number}
+                              </span>
+                              <span className="truncate">{ch.title || '(Tanpa Judul)'}</span>
                             </button>
                           </div>
 
-                          {/* Node actions (Indenting, Reordering, Moving, deleting) */}
                           {myRole !== 'reader' && (
-                            <div className="flex items-center gap-1.5 self-end md:self-auto bg-[#F9F6F0]/80 dark:bg-stone-900 border border-[#E5E1D8]/40 dark:border-[#3A3A30]/40 p-1 rounded-lg">
-                              {/* Indent / Outdent */}
+                            <div className="flex items-center gap-1 flex-shrink-0">
                               <button
                                 type="button"
-                                onClick={() => outdentChapter(ch.id)}
-                                disabled={!ch.parentId}
-                                title="Geser Keluar (Outdent)"
-                                className="px-1.5 py-0.5 text-xs font-bold rounded hover:bg-[#E5E1D8] dark:hover:bg-stone-800 text-stone-600 dark:text-stone-300 disabled:opacity-30 cursor-pointer"
-                              >
-                                ←
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => indentChapter(ch.id)}
-                                title="Geser ke Dalam (Indent)"
-                                className="px-1.5 py-0.5 text-xs font-bold rounded hover:bg-[#E5E1D8] dark:hover:bg-stone-800 text-stone-600 dark:text-stone-300 disabled:opacity-30 cursor-pointer"
-                              >
-                                →
-                              </button>
-
-                              {/* Sibling Reordering */}
-                              <button
-                                type="button"
-                                onClick={() => moveChapterUp(ch.id)}
-                                title="Pindahkan Ke Atas"
-                                className="p-1 rounded hover:bg-[#E5E1D8] dark:hover:bg-stone-800 text-stone-600 dark:text-stone-300 cursor-pointer"
+                                onClick={() => handleMoveNodeUp(ch.id)}
+                                disabled={isFirstSibling}
+                                className={`p-1 rounded transition-colors disabled:opacity-20 ${isActive ? 'hover:bg-white/20 text-white' : 'hover:bg-[#E5E1D8] text-neutral-500'}`}
+                                title="Pindahkan ke atas"
                               >
                                 <ArrowUp className="w-3 h-3" />
                               </button>
                               <button
                                 type="button"
-                                onClick={() => moveChapterDown(ch.id)}
-                                title="Pindahkan Ke Bawah"
-                                className="p-1 rounded hover:bg-[#E5E1D8] dark:hover:bg-stone-800 text-stone-600 dark:text-stone-300 cursor-pointer"
+                                onClick={() => handleMoveNodeDown(ch.id)}
+                                disabled={isLastSibling}
+                                className={`p-1 rounded transition-colors disabled:opacity-20 ${isActive ? 'hover:bg-white/20 text-white' : 'hover:bg-[#E5E1D8] text-neutral-500'}`}
+                                title="Pindahkan ke bawah"
                               >
                                 <ArrowDown className="w-3 h-3" />
                               </button>
-
-                              {/* Change parent picker dropdown to move anywhere quickly */}
-                              <select
-                                value={ch.parentId || ''}
-                                onChange={(e) => updateChapterParent(ch.id, e.target.value || undefined)}
-                                title="Pindahkan ke Parent lain"
-                                className="max-w-[75px] bg-stone-100 dark:bg-stone-800 border-none text-[9px] rounded px-1.5 py-0.5 focus:outline-none text-[#777266] dark:text-stone-300 cursor-pointer"
+                              <button
+                                type="button"
+                                onClick={() => handleAddSubNode(ch.id)}
+                                className={`p-1 rounded transition-colors ${isActive ? 'hover:bg-white/20 text-white' : 'hover:bg-[#E5E1D8] text-neutral-500'}`}
+                                title="Tambah Sub-Node (Fasal)"
                               >
-                                <option value="">(Root)</option>
-                                {editorChapters
-                                  .filter(c => c.id !== ch.id)
-                                  .map(c => <option key={c.id} value={c.id}>{c.nodeType || 'Node'} {c.number}: {c.title}</option>)}
-                              </select>
-
-                              {/* Recursive Delete button */}
+                                <FolderPlus className="w-3.5 h-3.5" />
+                              </button>
                               {editorChapters.length > 1 && (
-                                confirmDeleteId === ch.id ? (
-                                  <div className="flex items-center gap-1 bg-red-50 dark:bg-red-950/20 px-1.5 py-0.5 rounded border border-red-200 dark:border-red-900/50">
-                                    <span className="text-[10px] text-red-600 dark:text-red-400 font-bold">Yakin?</span>
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        deleteChapter(idxInChapters);
-                                        setConfirmDeleteId(null);
-                                      }}
-                                      className="px-1.5 py-0.5 bg-red-600 hover:bg-red-700 text-white rounded text-[10px] font-bold cursor-pointer"
-                                    >
-                                      Ya
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setConfirmDeleteId(null);
-                                      }}
-                                      className="px-1.5 py-0.5 bg-stone-200 hover:bg-stone-300 dark:bg-stone-800 dark:hover:bg-stone-700 text-stone-700 dark:text-stone-300 rounded text-[10px] cursor-pointer"
-                                    >
-                                      Batal
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setConfirmDeleteId(ch.id);
-                                    }}
-                                    className="p-1.5 hover:bg-red-500 hover:text-white rounded text-stone-500 transition-colors cursor-pointer"
-                                    title="Hapus Node & Seluruh Subtree"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
-                                )
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setConfirmDeleteId(ch.id);
+                                  }}
+                                  className={`p-1 rounded transition-colors ${
+                                    isActive ? 'hover:bg-red-700/30 text-red-200' : 'hover:bg-red-50 dark:hover:bg-red-950/20 text-red-600'
+                                  }`}
+                                  title="Hapus Node Ini beserta sub-nya"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
                               )}
                             </div>
                           )}
                         </div>
 
-                        {hasChildren && !isCollapsed && (
-                          <div className="space-y-1">
-                            {node.children.map(renderWriterNode)}
+                        {/* Confirmation dialog embedded inside node list to look clean */}
+                        {confirmDeleteId === ch.id && (
+                          <div className="absolute inset-0 bg-stone-100 dark:bg-stone-900 p-2 rounded-lg flex items-center justify-between z-10 animate-fade-in border border-red-200 dark:border-red-900/30">
+                            <span className="text-[10px] font-bold text-red-600 dark:text-red-400">Yakin hapus node?</span>
+                            <div className="flex gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteNode(ch.id)}
+                                className="px-2 py-1 bg-red-600 text-white font-bold rounded text-[9px] hover:bg-red-700"
+                              >
+                                Hapus
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteId(null)}
+                                className="px-2 py-1 bg-stone-200 dark:bg-stone-800 text-stone-700 dark:text-stone-300 font-bold rounded text-[9px]"
+                              >
+                                Batal
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {!isCollapsed && node.children.length > 0 && (
+                          <div className="mt-2 space-y-1.5 border-t border-dashed border-[#E5E1D8] dark:border-[#3A3A30] pt-2">
+                            {node.children.map(renderNode)}
                           </div>
                         )}
                       </div>
@@ -2622,8 +2791,8 @@ export default function CollaborativeEditor() {
               </div>
 
               {/* 2. Daftar Halaman di Node Ini */}
-              <div className="bg-[#F9F6F0] dark:bg-[#181814] border border-[#E5E1D8] dark:border-[#3A3A30] rounded-xl p-4 shadow-none space-y-3">
-                <div className="flex items-center justify-between">
+              <div className="bg-[#F9F6F0] dark:bg-[#181814] border border-[#E5E1D8] dark:border-[#3A3A30] rounded-xl p-4 shadow-none">
+                <div className="flex items-center justify-between mb-3">
                   <h4 className="font-serif font-bold text-[#5A5A40] dark:text-[#E5E1D8] text-xs flex items-center gap-1.5">
                     <FileText className="w-4 h-4 text-[#5A5A40] dark:text-[#E5E1D8]" /> 2. Daftar Halaman di Node Ini
                   </h4>
@@ -2634,46 +2803,56 @@ export default function CollaborativeEditor() {
                       onClick={addPageToActiveChapter}
                       className="flex items-center gap-1 text-[11px] font-bold text-[#5A5A40] hover:text-[#454530] dark:text-[#E5E1D8] focus:outline-none cursor-pointer"
                     >
-                      + Tambah Halaman Baru
+                      + Halaman
                     </button>
                   )}
                 </div>
 
-                <div id="writer-pages-list" className="flex flex-wrap gap-2 max-h-32 overflow-y-auto pr-1 custom-scrollbar">
-                  {uniquePages.map((pageNum) => (
-                    <div
-                      key={pageNum}
-                      id={`writer-page-tab-${pageNum}`}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold cursor-pointer transition-all ${
-                        pageNum === activePageNumber
-                          ? 'bg-[#5A5A40] border-[#5A5A40] text-white font-bold shadow-none'
-                          : 'bg-[#FDFBF7] dark:bg-[#121210] border-[#E5E1D8] dark:border-[#3A3A30] text-[#777266] dark:text-[#A8A890] hover:bg-[#F0ECE1]'
-                      }`}
-                      onClick={() => setActivePageNumber(pageNum)}
-                    >
-                      <span>Halaman {pageNum}</span>
-                      {myRole !== 'reader' && uniquePages.length > 1 && (
+                <div className="flex flex-wrap gap-2 max-h-[120px] overflow-y-auto p-1 bg-[#F4F1EA] dark:bg-stone-900/40 rounded-xl border border-[#E5E1D8] dark:border-[#3A3A30]">
+                  {uniquePages.map((pageNum) => {
+                    const isActive = pageNum === activePageNumber;
+                    const pageParagraphs = activeChapterParagraphs.filter(p => (p.page || 1) === pageNum);
+                    const isEmpty = pageParagraphs.every(p => !p.arabic.trim());
+
+                    return (
+                      <div key={pageNum} className="relative group">
                         <button
-                          id={`btn-delete-page-tab-${pageNum}`}
+                          id={`page-select-btn-${pageNum}`}
                           type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            triggerConfirm(
-                              'Hapus Halaman',
-                              `Hapus seluruh halaman ${pageNum} ini beserta seluruh baris paragrafnya?`,
-                              () => removePageFromActiveChapter(pageNum),
-                              'Hapus',
-                              'Batal'
-                            );
-                          }}
-                          className="text-stone-400 hover:text-red-500 focus:outline-none ml-1 p-0.5 rounded-md cursor-pointer"
-                          title="Hapus Halaman"
+                          onClick={() => setActivePageNumber(pageNum)}
+                          className={`px-3.5 py-1.5 text-xs font-bold rounded-lg border transition-all cursor-pointer flex items-center gap-1 ${
+                            isActive
+                              ? 'bg-[#5A5A40] border-[#5A5A40] text-white shadow-none'
+                              : isEmpty
+                              ? 'bg-amber-50/40 dark:bg-amber-950/10 border-amber-200/50 dark:border-amber-950/20 text-amber-700/60 hover:bg-[#E5E1D8]'
+                              : 'bg-white dark:bg-stone-950 border-[#E5E1D8] dark:border-[#3A3A30] text-[#777266] hover:bg-[#E5E1D8] dark:hover:bg-[#121210]'
+                          }`}
                         >
-                          <X className="w-3 h-3 pointer-events-none" />
+                          Hlm. {pageParagraphs[0]?.pageLabel || pageNum}
+                          {isEmpty && <span className="w-1.5 h-1.5 bg-amber-500 rounded-full" title="Halaman kosong" />}
                         </button>
-                      )}
-                    </div>
-                  ))}
+                        {myRole !== 'reader' && uniquePages.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              triggerConfirm(
+                                'Hapus Halaman',
+                                `Hapus seluruh halaman ${pageNum} ini beserta seluruh baris paragrafnya?`,
+                                () => removePageFromActiveChapter(pageNum),
+                                'Hapus',
+                                'Batal'
+                              );
+                            }}
+                            className="absolute -top-1 -right-1 bg-red-600 text-white rounded-full p-0.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity hover:bg-red-700 shadow-sm cursor-pointer"
+                            title="Hapus Halaman ini"
+                          >
+                            <X className="w-2.5 h-2.5" />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -2701,73 +2880,63 @@ export default function CollaborativeEditor() {
                           saveDraftToCloud(newChapters);
                         }
                       }}
-                      className="w-full px-3.5 py-2.5 text-xs font-bold rounded-lg border border-[#E5E1D8] dark:border-[#3A3A30] bg-[#FDFBF7] dark:bg-[#121210] text-[#333333] dark:text-[#E5E1D8] focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
+                      className="w-full bg-white dark:bg-stone-950 border border-[#E5E1D8] dark:border-[#3A3A30] text-xs rounded-lg px-3 py-2 text-[#333333] dark:text-[#E5E1D8] focus:outline-none focus:ring-1 focus:ring-[#5A5A40] font-mono"
                     />
                   </div>
-                  <div className="sm:col-span-3 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <label htmlFor="chapter-title-input" className="block text-xs font-bold text-[#5A5A40] dark:text-[#E5E1D8]">
-                        Judul {editorChapters[activeChapterIdx]?.isSubChapter ? 'Sub Bab (Fasal)' : 'Bab'} Aktif *
-                      </label>
-                      <label className="flex items-center gap-1.5 text-xs font-bold text-[#5A5A40] dark:text-[#E5E1D8] cursor-pointer">
-                        <input
-                          type="checkbox"
-                          disabled={myRole === 'reader'}
-                          checked={!!editorChapters[activeChapterIdx]?.isSubChapter}
-                          onChange={() => toggleSubChapter(activeChapterIdx)}
-                          className="rounded border-[#E5E1D8] text-[#5A5A40] focus:ring-[#5A5A40] focus:ring-offset-0 bg-[#FDFBF7]"
-                        />
-                        Jadikan Sub Bab
-                      </label>
-                    </div>
+                  <div className="sm:col-span-3">
+                    <label htmlFor="chapter-title-input" className="block text-xs font-bold text-[#5A5A40] dark:text-[#E5E1D8] mb-1.5">
+                      Judul Bab / Fasal / Bagian ini *
+                    </label>
                     <input
                       id="chapter-title-input"
                       type="text"
                       required
                       disabled={myRole === 'reader'}
-                      placeholder="Contoh: Bab 1: Keutamaan Niat di dalam Hati"
                       value={editorChapters[activeChapterIdx]?.title || ''}
-                      onChange={(e) => editChapterTitle(activeChapterIdx, e.target.value)}
-                      className="w-full px-3.5 py-2.5 text-xs font-bold rounded-lg border border-[#E5E1D8] dark:border-[#3A3A30] bg-[#FDFBF7] dark:bg-[#121210] text-[#333333] dark:text-[#E5E1D8] focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
-                    />
-                  </div>
-                </div>
-
-                {/* Page Customization Section */}
-                <div className="flex flex-col sm:flex-row gap-4 items-end bg-[#F4F1EA]/50 dark:bg-[#1C1C18]/35 p-3.5 rounded-lg border border-[#E5E1D8] dark:border-[#3A3A30]">
-                  <div className="w-full sm:w-36">
-                    <label htmlFor="page-number-input" className="block text-xs font-bold text-[#5A5A40] dark:text-[#E5E1D8] mb-1.5">
-                      Nomor Halaman saat ini *
-                    </label>
-                    <input
-                      id="page-number-input"
-                      type="number"
-                      min="1"
-                      required
-                      disabled={myRole === 'reader'}
-                      value={activePageNumber}
                       onChange={(e) => {
-                        const newPageVal = parseInt(e.target.value) || 1;
+                        const val = e.target.value;
                         const newChapters = [...editorChapters];
                         if (newChapters[activeChapterIdx]) {
-                          newChapters[activeChapterIdx].paragraphs = newChapters[activeChapterIdx].paragraphs.map(p => {
-                            if ((p.page || 1) === activePageNumber) {
-                              return { ...p, page: newPageVal };
-                            }
-                            return p;
-                          });
+                          newChapters[activeChapterIdx].title = val;
                           setEditorChapters(newChapters);
                           pushToUndoStack(newChapters);
                           saveDraftToCloud(newChapters);
                         }
-                        setActivePageNumber(newPageVal);
                       }}
-                      className="w-full px-3 py-2 text-xs font-bold rounded-lg border border-[#E5E1D8] dark:border-[#3A3A30] bg-[#FDFBF7] dark:bg-[#121210] text-[#333333] dark:text-[#E5E1D8] focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
+                      className="w-full bg-white dark:bg-stone-950 border border-[#E5E1D8] dark:border-[#3A3A30] text-xs rounded-lg px-3 py-2 text-[#333333] dark:text-[#E5E1D8] focus:outline-none focus:ring-1 focus:ring-[#5A5A40] font-serif font-bold"
                     />
                   </div>
-                  <p className="text-[11px] text-[#777266] dark:text-[#A8A890] leading-normal">
-                    Ubah nomor halaman aktif ini untuk memindahkannya ke nomor halaman mana pun secara instan. Paragraf di halaman ini akan otomatis dipindahkan!
-                  </p>
+                </div>
+
+                {/* Page Label Edit */}
+                <div className="border-b border-[#E5E1D8] dark:border-[#3A3A30] pb-4">
+                  <label htmlFor="page-label-input" className="block text-xs font-bold text-[#5A5A40] dark:text-[#E5E1D8] mb-1.5">
+                    Nomor Halaman saat ini *
+                  </label>
+                  <input
+                    id="page-label-input"
+                    type="number"
+                    min="1"
+                    placeholder={`${activePageNumber}`}
+                    disabled={myRole === 'reader'}
+                    value={paragraphsOnActivePage[0]?.pageLabel || ''}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      const newChapters = [...editorChapters];
+                      const ch = newChapters[activeChapterIdx];
+                      if (ch) {
+                        ch.paragraphs.forEach(pObj => {
+                          if ((pObj.page || 1) === activePageNumber) {
+                            pObj.pageLabel = val;
+                          }
+                        });
+                        setEditorChapters(newChapters);
+                        pushToUndoStack(newChapters);
+                        saveDraftToCloud(newChapters);
+                      }
+                    }}
+                    className="w-full sm:w-1/2 bg-white dark:bg-stone-950 border border-[#E5E1D8] dark:border-[#3A3A30] text-xs rounded-lg px-3 py-2 text-[#333333] dark:text-[#E5E1D8] focus:outline-none focus:ring-1 focus:ring-[#5A5A40] font-sans"
+                  />
                 </div>
 
                 {/* Paragraph Nodes Iterator for Active Page */}
@@ -2785,6 +2954,7 @@ export default function CollaborativeEditor() {
                     const showTrans = toggledFields[p.id]?.trans ?? (p.translation !== undefined && p.translation !== '');
                     const showExpl = toggledFields[p.id]?.expl ?? (p.explanation !== undefined && p.explanation !== '');
                     const isArabicSyarah = arabicExplanations[p.id] || false;
+                    const isMainLtr = mainLtrFields[p.id] !== undefined ? mainLtrFields[p.id] : (activeDraft?.type === 'buku' || activeDraft?.type === 'artikel');
 
                     return (
                       <div
@@ -2834,7 +3004,7 @@ export default function CollaborativeEditor() {
                               onChange={() => handleToggleField(p.id, 'trans')}
                               className="rounded text-[#5A5A40] focus:ring-[#5A5A40]"
                             />
-                            Sertakan Terjemahan
+                            {activeDraft?.type === 'kitab' ? 'Sertakan Terjemahan' : 'Sertakan Teks Penjelas Kedua'}
                           </label>
                           <label className="flex items-center gap-1.5 text-xs text-[#5A5A40] dark:text-[#E5E1D8] font-semibold cursor-pointer select-none">
                             <input
@@ -2844,7 +3014,7 @@ export default function CollaborativeEditor() {
                               onChange={() => handleToggleField(p.id, 'expl')}
                               className="rounded text-[#5A5A40] focus:ring-[#5A5A40]"
                             />
-                            Sertakan Penjelasan / Syarah
+                            {activeDraft?.type === 'kitab' ? 'Sertakan Penjelasan / Syarah' : 'Sertakan Catatan Kaki / Detail'}
                           </label>
                         </div>
 
@@ -2853,30 +3023,30 @@ export default function CollaborativeEditor() {
                           <div>
                             <div className="flex items-center justify-between mb-1">
                               <label htmlFor={`arabic-text-input-${p.id}`} className="block text-[11px] font-bold text-[#5A5A40] dark:text-[#E5E1D8]">
-                                Teks Arab / Paragraf Utama *
+                                {activeDraft?.type === 'kitab' ? 'Naskah Asli Arab *' : 'Teks Utama *'}
                               </label>
                               <button
                                 type="button"
                                 disabled={myRole === 'reader'}
-                                onClick={() => setMainLtrFields(prev => ({ ...prev, [p.id]: !prev[p.id] }))}
+                                onClick={() => setMainLtrFields(prev => ({ ...prev, [p.id]: !isMainLtr }))}
                                 className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all border cursor-pointer ${
-                                  !mainLtrFields[p.id]
+                                  !isMainLtr
                                     ? 'bg-[#5A5A40] text-white border-[#5A5A40]'
                                     : 'bg-white dark:bg-stone-900 text-[#777266] dark:text-stone-400 border-[#E5E1D8] dark:border-[#3A3A30] hover:bg-[#5A5A40]/10'
                                 }`}
                               >
-                                {!mainLtrFields[p.id] ? 'Font Arab (RTL)' : 'Teks Biasa (LTR)'}
+                                {!isMainLtr ? 'Font Arab (RTL)' : 'Teks Biasa (LTR)'}
                               </button>
                             </div>
                             <RichTextEditor
                               id={`arabic-text-input-${p.id}`}
-                              dir={!mainLtrFields[p.id] ? "rtl" : "ltr"}
+                              dir={isMainLtr ? "ltr" : "rtl"}
                               disabled={myRole === 'reader'}
-                              placeholder={!mainLtrFields[p.id] ? "إِنَّمَا الْأَعْمَالُ بِالنِّيَّاتِ..." : "Ketik naskah utama di sini..."}
+                              placeholder={isMainLtr ? "Tulis teks utama naskah di sini..." : "إِنَّمَا الْأَعْمَالُ بِالنِّيَّاتِ..."}
                               value={p.arabic}
                               onChange={(val) => updateParagraphFieldById(p.id, 'arabic', val)}
-                              className={!mainLtrFields[p.id] ? 'font-amiri font-bold text-lg' : 'font-sans text-xs'}
-                              style={!mainLtrFields[p.id] ? { fontFamily: preferences.arabicFontFamily || 'Amiri' } : {}}
+                              className={isMainLtr ? 'font-sans text-xs' : 'font-amiri font-bold text-lg'}
+                              style={isMainLtr ? {} : { fontFamily: preferences.arabicFontFamily || 'Amiri' }}
                             />
                           </div>
 
@@ -2885,7 +3055,7 @@ export default function CollaborativeEditor() {
                             <div className="animation-fade-in">
                               <div className="flex items-center justify-between mb-1">
                                 <label htmlFor={`translation-text-input-${p.id}`} className="block text-[11px] font-bold text-[#5A5A40] dark:text-[#E5E1D8]">
-                                  Terjemahan Bahasa Indonesia
+                                  {activeDraft?.type === 'kitab' ? 'Terjemahan Bahasa Indonesia' : 'Teks Penjelas Kedua'}
                                 </label>
                                 <button
                                   type="button"
@@ -2904,7 +3074,7 @@ export default function CollaborativeEditor() {
                                 id={`translation-text-input-${p.id}`}
                                 disabled={myRole === 'reader'}
                                 dir={transRtlFields[p.id] ? "rtl" : "ltr"}
-                                placeholder={transRtlFields[p.id] ? "اكتب الترجمة باللغة العربية هنا..." : "Sesungguhnya amal perbuatan itu didasarkan pada niat..."}
+                                placeholder={transRtlFields[p.id] ? "اكتب الترجمة باللغة العربية هنا..." : (activeDraft?.type === 'kitab' ? "Sesungguhnya amal perbuatan itu didasarkan pada niat..." : "Tulis teks penjelas tambahan di sini...")}
                                 value={p.translation}
                                 onChange={(val) => updateParagraphFieldById(p.id, 'translation', val)}
                                 className={transRtlFields[p.id] ? 'font-amiri font-bold text-lg' : 'font-sans text-xs'}
@@ -2918,11 +3088,11 @@ export default function CollaborativeEditor() {
                             <div className="animation-fade-in">
                               <div className="flex items-center justify-between mb-1">
                                 <label htmlFor={`explanation-text-input-${p.id}`} className="block text-[11px] font-bold text-[#5A5A40] dark:text-[#E5E1D8]">
-                                  Penjelasan Syarah / Tafsir Detail
+                                  {activeDraft?.type === 'kitab' ? 'Penjelasan Syarah / Tafsir Detail' : 'Tafsir / Catatan Kaki / Detail'}
                                 </label>
                                 <button
                                   type="button"
-                                  onClick={() => setArabicExplanations(prev => ({ ...prev, [p.id]: !prev[p.id] }))}
+                                  onClick={() => setArabicExplanations(prev => ({ ...prev, [p.id]: !isArabicSyarah }))}
                                   className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all border ${
                                     isArabicSyarah
                                       ? 'bg-[#5A5A40] text-white border-[#5A5A40]'
@@ -2936,7 +3106,7 @@ export default function CollaborativeEditor() {
                                 id={`explanation-text-input-${p.id}`}
                                 disabled={myRole === 'reader'}
                                 dir={isArabicSyarah ? 'rtl' : 'ltr'}
-                                placeholder={isArabicSyarah ? "اكتب الشرح أو التفسير هنا..." : "Hadis ini dikisahkan..."}
+                                placeholder={isArabicSyarah ? "اكتب الشرح أو التفسير هنا..." : (activeDraft?.type === 'kitab' ? "Hadis ini dikisahkan..." : "Tulis catatan kaki, kutipan, atau penjelasan rinci di sini...")}
                                 value={p.explanation || ''}
                                 onChange={(val) => updateParagraphFieldById(p.id, 'explanation', val)}
                                 className={isArabicSyarah ? 'font-amiri text-lg' : 'text-xs'}
@@ -2950,46 +3120,33 @@ export default function CollaborativeEditor() {
                   })}
                 </div>
 
-                {/* Bottom Actions Row */}
+                {/* Footer Controls for Chapter Editing */}
                 {myRole !== 'reader' && (
-                  <div className="flex flex-col sm:flex-row gap-3 pt-4 border-t border-[#E5E1D8] dark:border-[#3A3A30] justify-between">
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        id="btn-writer-add-paragraph"
-                        type="button"
-                        onClick={addParagraph}
-                        className="px-4 py-2.5 bg-[#E5E1D8] hover:bg-[#D5D0C4] text-[#5A5A40] text-xs font-bold rounded-lg focus:outline-none transition-all flex items-center justify-center gap-1 cursor-pointer"
-                      >
-                        <Plus className="w-4 h-4" /> Tambah Paragraf Berikutnya
-                      </button>
-                      <button
-                        id="btn-writer-add-page-bottom"
-                        type="button"
-                        onClick={addPageToActiveChapter}
-                        className="px-4 py-2.5 bg-amber-100 hover:bg-amber-200 text-[#5A5A40] text-xs font-bold rounded-lg focus:outline-none transition-all flex items-center justify-center gap-1 cursor-pointer"
-                      >
-                        <Plus className="w-4 h-4" /> Tambah Halaman Baru
-                      </button>
-                      <button
-                        id="btn-writer-add-sub-chapter-bottom"
-                        type="button"
-                        onClick={addSubChapter}
-                        className="px-4 py-2.5 bg-[#5A5A40]/5 hover:bg-[#5A5A40]/10 text-[#5A5A40] dark:text-[#E5E1D8] text-xs font-bold rounded-lg focus:outline-none transition-all flex items-center justify-center gap-1 cursor-pointer"
-                      >
-                        <Plus className="w-4 h-4" /> Tambah Sub Bab
-                      </button>
-                      <button
-                        id="btn-writer-add-chapter-bottom"
-                        type="button"
-                        onClick={addChapter}
-                        className="px-4 py-2.5 bg-[#5A5A40]/10 hover:bg-[#5A5A40]/20 text-[#5A5A40] dark:text-[#E5E1D8] text-xs font-bold rounded-lg focus:outline-none transition-all flex items-center justify-center gap-1 cursor-pointer"
-                      >
-                        <Plus className="w-4 h-4" /> Tambah Bab Baru
-                      </button>
-                    </div>
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 border-t border-[#E5E1D8] dark:border-[#3A3A30] pt-4">
+                    <button
+                      id="btn-writer-add-paragraph"
+                      type="button"
+                      onClick={addParagraph}
+                      className="flex items-center justify-center gap-1.5 px-4 py-3 sm:py-2.5 bg-stone-100 hover:bg-stone-200 dark:bg-[#1A1A14] dark:hover:bg-[#2A2A24] text-[#5A5A40] dark:text-[#E5E1D8] font-bold text-xs rounded-lg border border-stone-200 dark:border-[#3A3A30] focus:outline-none transition-all cursor-pointer w-full sm:w-auto order-2 sm:order-1"
+                    >
+                      <Plus className="w-4 h-4" /> Tambah Blok Teks
+                    </button>
+                    <button
+                      id="btn-writer-submit-kitab"
+                      type="button"
+                      onClick={() => {
+                        saveDraftToCloud(editorChapters);
+                        addToast('Karya Disimpan', 'Draf kolaboratif berhasil disimpan ke cloud secara instan.', 'success');
+                      }}
+                      className="flex items-center justify-center gap-1.5 px-6 py-3 sm:py-2.5 bg-[#5A5A40] hover:bg-[#454530] text-white font-bold text-xs rounded-lg shadow-none focus:outline-none transition-all cursor-pointer w-full sm:w-auto order-1 sm:order-2"
+                    >
+                      <Save className="w-4 h-4" /> Simpan
+                    </button>
                   </div>
                 )}
               </div>
+                </>
+              )}
 
             </div>
           </div>
@@ -3106,7 +3263,7 @@ export default function CollaborativeEditor() {
                   >
                     <div className="flex items-center justify-between">
                       <span className="text-[10px] font-mono font-bold text-stone-500">
-                        {diff.chapterTitle} • Paragraf ID: {diff.paragraphId.substr(0, 6)}
+                        {diff.chapterId === '_article' ? 'Naskah Artikel' : `${diff.chapterTitle} • Paragraf ID: ${diff.paragraphId.substr(0, 6)}`}
                       </span>
                       <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${
                         diff.type === 'added' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' :
